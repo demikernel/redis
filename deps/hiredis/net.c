@@ -51,7 +51,7 @@
 #include <limits.h>
 #include <stdlib.h>
 
-#include "../../../../include/io-queue_c.h"
+#include <zeus/io-queue_c.h>
 
 #include "net.h"
 #include "sds.h"

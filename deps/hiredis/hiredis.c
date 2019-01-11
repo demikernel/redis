@@ -39,7 +39,7 @@
 #include <errno.h>
 #include <ctype.h>
 
-#include "../../../../include/io-queue_c.h"
+#include <zeus/io-queue_c.h>
 
 #include "hiredis.h"
 #include "net.h"

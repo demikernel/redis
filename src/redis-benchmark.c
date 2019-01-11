@@ -46,7 +46,7 @@
 #include "adlist.h"
 #include "zmalloc.h"
 
-#include "include/io-queue_c.h"
+#include <zeus/io-queue_c.h>
 
 
 #define UNUSED(V) ((void) V)

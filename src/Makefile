@@ -69,8 +69,8 @@ endif
 # Override default settings if possible
 -include .make-settings
 
-ZEUS_CFLAGS := -I$(ZEUS_SRC_DIR)
-ZEUS_LDFLAGS := -L$(ZEUS_SRC_DIR) -lzeus_posix -Wl,-rpath,$(ZEUS_SRC_DIR)
+ZEUS_CFLAGS := -I$(DEMETER_INCLUDE)
+ZEUS_LDFLAGS := -L$(dir $(DEMETER_SO)) -l:$(notdir $(DEMETER_SO)) -Wl,-rpath,$(dir $(DEMETER_SO)) 
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
