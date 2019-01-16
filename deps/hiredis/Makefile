@@ -42,8 +42,8 @@ OPTIMIZATION?=-O3
 WARNINGS=-Wall -W -Wstrict-prototypes -Wwrite-strings
 DEBUG_FLAGS?= -g -ggdb
 
-ZEUS_CFLAGS := -I../../../../include
-ZEUS_LDFLAGS := -L../../../../ -lzeus_posix -Wl,-rpath=${HOME}/workspace/datacenter-OS/
+ZEUS_CFLAGS := -I$(DEMETER_INCLUDE)
+ZEUS_LDFLAGS := -L$(dir $(DEMETER_SO)) -Wl,-rpath,$(dir $(DEMETER_SO)) -l:$(notdir $(DEMETER_SO))
 
 CFLAGS += $(ZEUS_CFLAGS)
 LDFLAGS += $(ZEUS_LDFLAGS)

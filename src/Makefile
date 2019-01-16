@@ -70,14 +70,14 @@ endif
 -include .make-settings
 
 ZEUS_CFLAGS := -I$(DEMETER_INCLUDE)
-ZEUS_LDFLAGS := -L$(dir $(DEMETER_SO)) -l:$(notdir $(DEMETER_SO)) -Wl,-rpath,$(dir $(DEMETER_SO)) 
+ZEUS_LDFLAGS := -L$(dir $(DEMETER_SO)) -Wl,-rpath,$(dir $(DEMETER_SO))
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb
 
-ZEUS_LIBS := -L../../../ -lzeus_posix
+ZEUS_LIBS := -l:$(notdir $(DEMETER_SO))
 FINAL_CFLAGS += $(ZEUS_CFLAGS)
 FINAL_LDFLAGS += $(ZEUS_LDFLAGS)
 FINAL_LIBS += $(ZEUS_LIBS)
