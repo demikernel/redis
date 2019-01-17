@@ -34,6 +34,9 @@
 #define __AE_H__
 
 #include <time.h>
+#include <limits.h>
+#include "uthash.h"
+#include <zeus/io-queue_c.h>
 
 #define AE_OK 0
 #define AE_ERR -1
@@ -46,6 +49,7 @@
                            loop iteration. Useful when you want to persist
                            things to disk before sending replies, and want
                            to do that in a group fashion. */
+#define AE_LIB_LISTEN 7 /* Distinguish between read connect() or read write() */
 
 #define AE_FILE_EVENTS 1
 #define AE_TIME_EVENTS 2
@@ -58,8 +62,6 @@
 
 /* Macros */
 #define AE_NOTUSED(V) ((void) V)
-
-
 
 struct aeEventLoop;
 
@@ -90,9 +92,35 @@ typedef struct aeTimeEvent {
 
 /* A fired event */
 typedef struct aeFiredEvent {
+    // _JL_
     int fd;
+    int qd;
     int mask;
 } aeFiredEvent;
+
+#define LIBOS_Q_STATUS_NONE (INT_MIN)
+#define LIBOS_Q_STATUS_listen_inwait (-2)
+#define LIBOS_Q_STATUS_listen_nopop (-1)
+#define LIBOS_Q_STATUS_read_nopop (1)
+#define LIBOS_Q_STATUS_read_inwait (2)
+// NOTE, if later needs to support wait on push()
+// could just use numbers like 100, 101, etc.
+
+/**
+ * for listening qd, if nonpop, then call pop()
+ * if pop returns qtoken == 0, call accept() and set the status back to nopop
+ * if not, set the status into inwait, push the qtoken into list
+ * if wait_any returns this listening qt (w/ qd), and if status is inwait
+ * call accept() and then set status back to nopop
+ */
+
+struct qd_status {
+    int qd;            /* we'll use this field as the key */
+    zeus_qtoken status_token_arr[3]; /* [status][qtoken][client_ptr] */
+    UT_hash_handle hh; /* makes this structure hashable */
+};
+
+#define _SGA_ALLOC_FACTOR 32
 
 /* State of an event based program */
 typedef struct aeEventLoop {
@@ -107,7 +135,21 @@ typedef struct aeEventLoop {
     void *apidata; /* This is used for polling API specific data */
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
+    /* _JL_ */
+    struct qd_status *qd_status_map;   /* use to operate this hash map */
+    struct qd_status *qd_status_array;   /* use to allocate the data struct by batching*/
+    int qd_status_array_index;         /* current index of free qd_status item in array */
+    zeus_qtoken *wait_qtokens;
+    zeus_sgarray *sgarray_list;        // corresponding to qtoken (offset)
+    int sga_idx;
+    /////////
 } aeEventLoop;
+
+/* prototypes for queue status */
+int add_queue_status_item(aeEventLoop *eventLoop, int qd, int status);
+struct qd_status* find_queue_status_item(aeEventLoop* eventLoop, int qd);
+int del_queue_status_item(aeEventLoop *eventLoop, int qd);
+zeus_qtoken* walk_queue_status_map(aeEventLoop *eventLoop);
 
 /* Prototypes */
 aeEventLoop *aeCreateEventLoop(int setsize);

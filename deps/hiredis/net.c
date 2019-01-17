@@ -89,7 +89,7 @@ static int redisSetReuseAddr(redisContext *c) {
 static int redisCreateSocket(redisContext *c, int type) {
     int s;
     //if ((s = socket(type, SOCK_STREAM, 0)) == -1) {
-    if ((s = zeus_queue(type, SOCK_STREAM, 0)) == -1) {
+    if ((s = zeus_socket(type, SOCK_STREAM, 0)) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
         return REDIS_ERR;
     }
@@ -130,6 +130,7 @@ static int redisSetBlocking(redisContext *c, int blocking) {
 int redisKeepAlive(redisContext *c, int interval) {
     int val = 1;
     int fd = c->fd;
+#if 0
 
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1){
         __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
@@ -165,17 +166,20 @@ int redisKeepAlive(redisContext *c, int interval) {
     }
 #endif
 #endif
+#endif 
 
     return REDIS_OK;
 }
 
 static int redisSetTcpNoDelay(redisContext *c) {
     int yes = 1;
+#if 0
     if (setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(TCP_NODELAY)");
         redisContextCloseFd(c);
         return REDIS_ERR;
     }
+#endif
     return REDIS_OK;
 }
 
@@ -276,6 +280,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     int reuses = 0;
     long timeout_msec = -1;
 
+    printf("_JL_ _redisContextConnectTcp\n");
     servinfo = NULL;
     c->connection_type = REDIS_CONN_TCP;
     c->tcp.port = port;
@@ -340,7 +345,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     for (p = servinfo; p != NULL; p = p->ai_next) {
 addrretry:
         //if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
-        if ((s = zeus_queue(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
+        if ((s = zeus_socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
             continue;
 
         c->fd = s;
@@ -417,6 +422,7 @@ error:
     rv = REDIS_ERR;
 end:
     freeaddrinfo(servinfo);
+    printf("_JL_ _redisContextConnectTcp return\n");
     return rv;  // Need to return REDIS_OK if alright
 }
 

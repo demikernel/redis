@@ -28,6 +28,7 @@
  */
 
 #include "server.h"
+#include "server_sig.h"
 #include "cluster.h"
 #include "slowlog.h"
 #include "bio.h"
@@ -1185,6 +1186,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
  * for ready file descriptors. */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
+    //printf("server.c/beforeSleep @@@@@@\n");
 
     /* Call the Redis Cluster before sleep function. Note that this function
      * may change the state of Redis Cluster (from ok to fail or vice versa),
@@ -1219,7 +1221,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Check if there are clients unblocked by modules that implement
      * blocking commands. */
-    moduleHandleBlockedClients();
+    //moduleHandleBlockedClients();
 
     /* Try to process pending commands for clients that were just unblocked. */
     if (listLength(server.unblocked_clients))
@@ -1234,7 +1236,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Before we are going to sleep, let the threads access the dataset by
      * releasing the GIL. Redis main thread will not touch anything at this
      * time. */
-    if (moduleCount()) moduleReleaseGIL();
+    //if (moduleCount()) moduleReleaseGIL();
 }
 
 /* This function is called immadiately after the event loop multiplexing
@@ -1242,7 +1244,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
  * the different events callbacks. */
 void afterSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
-    if (moduleCount()) moduleAcquireGIL();
+    //if (moduleCount()) moduleAcquireGIL();
 }
 
 /* =========================== Server initialization ======================== */
@@ -1360,6 +1362,7 @@ void initServerConfig(void) {
     server.unixsocket = NULL;
     server.unixsocketperm = CONFIG_DEFAULT_UNIX_SOCKET_PERM;
     server.ipfd_count = 0;
+    server.ipqd_count = 0;
     server.sofd = -1;
     server.protected_mode = CONFIG_DEFAULT_PROTECTED_MODE;
     server.dbnum = CONFIG_DEFAULT_DBNUM;
@@ -1714,7 +1717,11 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
-int listenToPort(int port, int *fds, int *count) {
+int listenToPortOrig(int port, int *fds, int *count){
+    fprintf(stderr, "ERROR, listenToPort(port, fds, count) not supported\n");
+    return -1;
+}
+int listenToPort(int port, int *fds, int *qds, int *count, int *qd_count) {
     int j;
 
     /* Force binding of 0.0.0.0 if no bind address is specified, always
@@ -1725,23 +1732,27 @@ int listenToPort(int port, int *fds, int *count) {
             int unsupported = 0;
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
-            fds[*count] = anetTcp6Server(server.neterr,port,NULL,
-                server.tcp_backlog);
+            /* _JL_ not bind to ipv6 and forace it to ipv4 by emulating unsupport ipv6 */
+            unsupported = 1;
+            /*
+            fds[*count] = anetTcp6Server(server.neterr,port,NULL, server.tcp_backlog);
             if (fds[*count] != ANET_ERR) {
                 anetNonBlock(NULL,fds[*count]);
                 (*count)++;
             } else if (errno == EAFNOSUPPORT) {
                 unsupported++;
                 serverLog(LL_WARNING,"Not listening to IPv6: unsupproted");
-            }
+            }**/
 
             if (*count == 1 || unsupported) {
                 /* Bind the IPv4 address as well. */
-                fds[*count] = anetTcpServer(server.neterr,port,NULL,
-                    server.tcp_backlog);
+                qds[*qd_count] = anetTcpServer(server.neterr,port,NULL, server.tcp_backlog);
+                fprintf(stderr, "1-call anetTcpServer return: %d\n", qds[*qd_count]);
+                fds[*count] = zeus_qd2fd(qds[*qd_count]);
                 if (fds[*count] != ANET_ERR) {
                     anetNonBlock(NULL,fds[*count]);
                     (*count)++;
+                    (*qd_count)++;
                 } else if (errno == EAFNOSUPPORT) {
                     unsupported++;
                     serverLog(LL_WARNING,"Not listening to IPv4: unsupproted");
@@ -1753,12 +1764,15 @@ int listenToPort(int port, int *fds, int *count) {
             if (*count + unsupported == 2) break;
         } else if (strchr(server.bindaddr[j],':')) {
             /* Bind IPv6 address. */
-            fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
+            /* _JL_ not use IPv6 */
+            //fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j], server.tcp_backlog);
+            fprintf(stderr, "_JL_@@@ error: server.bindaddr[%d] is ipv6 addr. WE DO NOT HANDLE THIS!\n", j);
         } else {
             /* Bind IPv4 address. */
-            fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
+            qds[*qd_count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
                 server.tcp_backlog);
+            fprintf(stderr, "2-call anetTcpServer return:%d\n", qds[*qd_count]);
+            fds[*count] = zeus_qd2fd(qds[*qd_count]);
         }
         if (fds[*count] == ANET_ERR) {
             serverLog(LL_WARNING,
@@ -1769,6 +1783,7 @@ int listenToPort(int port, int *fds, int *count) {
         }
         anetNonBlock(NULL,fds[*count]);
         (*count)++;
+        (*qd_count)++;
     }
     return C_OK;
 }
@@ -1849,8 +1864,15 @@ void initServer(void) {
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
-        listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
+        listenToPort(server.port,server.ipfd,server.ipqd, &server.ipfd_count,&server.ipqd_count) == C_ERR)
         exit(1);
+
+    /* _JL_ record the listening port */
+    int ii = 0;
+    for(ii = 0; ii < server.ipqd_count; ii++) {
+        add_queue_status_item(server.el, server.ipqd[ii], LIBOS_Q_STATUS_listen_nopop);
+        fprintf(stderr, "initServer listening qd:%ld\n", server.ipqd[ii]);
+    }
 
     /* Open the listening Unix domain socket. */
     if (server.unixsocket != NULL) {
@@ -1934,15 +1956,15 @@ void initServer(void) {
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
 
-
     /* Register a readable event for the pipe used to awake the event loop
      * when a blocked client in a module needs attention. */
+    /** _JL_ no module
     if (aeCreateFileEvent(server.el, server.module_blocked_pipe[0], AE_READABLE,
         moduleBlockedClientPipeReadable,NULL) == AE_ERR) {
             serverPanic(
                 "Error registering the readable event for the module "
                 "blocked clients subsystem.");
-    }
+    }**/
 
     /* Open the AOF file if needed. */
     if (server.aof_state == AOF_ON) {
@@ -2330,6 +2352,7 @@ void call(client *c, int flags) {
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 int processCommand(client *c) {
+    if(REDIS_ZEUS_DEBUG) printf("processCommand\n");
     /* The QUIT command is handled separately. Normal command procs will
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
@@ -3644,7 +3667,7 @@ int redisSupervisedSystemd(void) {
 
     serverLog(LL_NOTICE, "supervised by systemd, will signal readiness");
     //if ((fd = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
-    if ((fd = zeus_queue(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
+    if ((fd = zeus_socket(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
         serverLog(LL_WARNING,
                 "Can't connect to systemd socket %s", notify_socket);
         return 0;
@@ -3745,7 +3768,7 @@ int main(int argc, char **argv) {
     dictSetHashFunctionSeed((uint8_t*)hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
     initServerConfig();
-    moduleInitModulesSystem();
+    //moduleInitModulesSystem();
 
     /* Store the executable path and arguments in a safe place in order
      * to be able to restart the server later. */
@@ -3867,7 +3890,7 @@ int main(int argc, char **argv) {
     #ifdef __linux__
         linuxMemoryWarnings();
     #endif
-        moduleLoadFromQueue();
+        //moduleLoadFromQueue();
         loadDataFromDisk();
         if (server.cluster_enabled) {
             if (verifyClusterConfigWithData() == C_ERR) {

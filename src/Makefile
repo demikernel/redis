@@ -13,8 +13,7 @@
 # Just use 'make dep', but this is only needed by developers.
 #
 ifndef ZEUS_SRC_DIR
-	#ZEUS_SRC_DIR=${HOME}/datacenter-OS/
-	ZEUS_SRC_DIR = ${HOME}/msr/datacenter-os/src
+	ZEUS_SRC_DIR=${HOME}/datacenter-OS/
 endif
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
@@ -168,7 +167,8 @@ REDIS_BENCHMARK_OBJ=ae.o anet.o redis-benchmark.o adlist.o zmalloc.o redis-bench
 REDIS_CHECK_RDB_NAME=redis-check-rdb
 REDIS_CHECK_AOF_NAME=redis-check-aof
 
-all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_RDB_NAME) $(REDIS_CHECK_AOF_NAME)
+#all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_RDB_NAME) $(REDIS_CHECK_AOF_NAME)
+all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_RDB_NAME) $(REDIS_CHECK_AOF_NAME)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
@@ -302,7 +302,7 @@ install: all
 	@mkdir -p $(INSTALL_BIN)
 	$(REDIS_INSTALL) $(REDIS_SERVER_NAME) $(INSTALL_BIN)
 	$(REDIS_INSTALL) $(REDIS_BENCHMARK_NAME) $(INSTALL_BIN)
-	$(REDIS_INSTALL) $(REDIS_CLI_NAME) $(INSTALL_BIN)
+#	$(REDIS_INSTALL) $(REDIS_CLI_NAME) $(INSTALL_BIN)
 	$(REDIS_INSTALL) $(REDIS_CHECK_RDB_NAME) $(INSTALL_BIN)
 	$(REDIS_INSTALL) $(REDIS_CHECK_AOF_NAME) $(INSTALL_BIN)
 	@ln -sf $(REDIS_SERVER_NAME) $(INSTALL_BIN)/$(REDIS_SENTINEL_NAME)

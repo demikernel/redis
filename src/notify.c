@@ -102,7 +102,8 @@ void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid) {
      * This bypasses the notifications configuration, but the module engine
      * will only call event subscribers if the event type matches the types
      * they are interested in. */
-     moduleNotifyKeyspaceEvent(type, event, key, dbid);
+    // _JL_
+     //moduleNotifyKeyspaceEvent(type, event, key, dbid);
     
     /* If notifications for this class of events are off, return ASAP. */
     if (!(server.notify_keyspace_events & type)) return;

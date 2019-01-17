@@ -585,6 +585,8 @@ typedef struct RedisModuleDigest {
 #define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
 
 #define OBJ_SHARED_REFCOUNT INT_MAX
+
+
 typedef struct redisObject {
     unsigned type:4;
     unsigned encoding:4;
@@ -607,6 +609,8 @@ typedef struct redisObject {
 } while(0)
 
 struct evictionPoolEntry; /* Defined in evict.c */
+
+
 
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
@@ -730,6 +734,9 @@ typedef struct client {
     /* Response buffer */
     int bufpos;
     char buf[PROTO_REPLY_CHUNK_BYTES];
+
+    /* _JL_ pointer to sga_array */
+    zeus_sgarray *sga_ptr;
 } client;
 
 struct saveparam {
@@ -912,6 +919,10 @@ struct redisServer {
     mode_t unixsocketperm;      /* UNIX socket permission */
     int ipfd[CONFIG_BINDADDR_MAX]; /* TCP socket file descriptors */
     int ipfd_count;             /* Used slots in ipfd[] */
+    /* _JL_ listening queue ids */
+    int ipqd[CONFIG_BINDADDR_MAX];
+    int ipqd_count;
+    /////////////////////////////
     int sofd;                   /* Unix socket file descriptor */
     int cfd[CONFIG_BINDADDR_MAX];/* Cluster bus listening socket */
     int cfd_count;              /* Used slots in cfd[] */
@@ -1388,7 +1399,8 @@ int getClientTypeByName(char *name);
 char *getClientTypeName(int class);
 void flushSlavesOutputBuffers(void);
 void disconnectSlaves(void);
-int listenToPort(int port, int *fds, int *count);
+int listenToPort(int port, int *fds, int *qds, int *count, int *qd_count);
+int listenToPortOrig(int port, int *fds, int *qds);
 void pauseClients(mstime_t duration);
 int clientsArePaused(void);
 int processEventsWhileBlocked(void);
@@ -2017,7 +2029,7 @@ void _serverAssert(const char *estr, const char *file, int line);
 void _serverPanic(const char *file, int line, const char *msg, ...);
 void bugReportStart(void);
 void serverLogObjectDebugInfo(const robj *o);
-void sigsegvHandler(int sig, siginfo_t *info, void *secret);
+//void sigsegvHandler(int sig, siginfo_t *info, void *secret);
 sds genRedisInfoString(char *section);
 void enableWatchdog(int period);
 void disableWatchdog(void);

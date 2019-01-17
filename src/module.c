@@ -3844,6 +3844,8 @@ int moduleRegisterApi(const char *funcname, void *funcptr) {
 void moduleRegisterCoreAPI(void);
 
 void moduleInitModulesSystem(void) {
+    fprintf(stderr, "@@@ Error: moduleInitModulesSystem should not be called\n");
+    exit(1);
     moduleUnblockedClients = listCreate();
     server.loadmodule_queue = listCreate();
     modules = dictCreate(&modulesDictType,NULL);

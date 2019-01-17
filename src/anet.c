@@ -48,6 +48,8 @@
 
 #include "anet.h"
 
+#define UNUSED(x) (void )(x)
+
 static void anetSetError(char *err, const char *fmt, ...)
 {
     va_list ap;
@@ -82,6 +84,7 @@ int anetSetBlock(char *err, int fd, int non_block) {
 }
 
 int anetNonBlock(char *err, int fd) {
+    // printf("_JL_@@@anet.c/anetNonBlock: fd:%d\n", fd);
     return anetSetBlock(err,fd,1);
 }
 
@@ -140,11 +143,13 @@ int anetKeepAlive(char *err, int fd, int interval)
 
 static int anetSetTcpNoDelay(char *err, int fd, int val)
 {
+#if 0
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) == -1)
     {
         anetSetError(err, "setsockopt TCP_NODELAY: %s", strerror(errno));
         return ANET_ERR;
     }
+#endif
     return ANET_OK;
 }
 
@@ -237,19 +242,24 @@ int anetResolveIP(char *err, char *host, char *ipbuf, size_t ipbuf_len) {
 
 static int anetSetReuseAddr(char *err, int fd) {
     int yes = 1;
+    // printf("_JL_@@@anet.c/anetSetReuseAddr fd:%d\n", fd);
+    UNUSED(yes);
+    UNUSED(fd);
+    UNUSED(err);
     /* Make sure connection-intensive things like the redis benckmark
      * will be able to close/open sockets a zillion of times */
+    /**
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt SO_REUSEADDR: %s", strerror(errno));
         return ANET_ERR;
-    }
+    }**/
     return ANET_OK;
 }
 
 static int anetCreateSocket(char *err, int domain) {
     int s;
     //if ((s = socket(domain, SOCK_STREAM, 0)) == -1) {
-    if ((s = zeus_queue(domain, SOCK_STREAM, 0)) == -1) {
+    if ((s = zeus_socket(domain, SOCK_STREAM, 0)) == -1) {
         anetSetError(err, "creating socket: %s", strerror(errno));
         return ANET_ERR;
     }
@@ -262,6 +272,7 @@ static int anetCreateSocket(char *err, int domain) {
     }
     return s;
 }
+
 
 #define ANET_CONNECT_NONE 0
 #define ANET_CONNECT_NONBLOCK 1
@@ -278,6 +289,7 @@ static int anetTcpGenericConnect(char *err, char *addr, int port,
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
+    // printf("_JL_ anetTcpGenericConnect()-1\n");
     if ((rv = getaddrinfo(addr,portstr,&hints,&servinfo)) != 0) {
         anetSetError(err, "%s", gai_strerror(rv));
         return ANET_ERR;
@@ -287,7 +299,7 @@ static int anetTcpGenericConnect(char *err, char *addr, int port,
          * If we fail in the socket() call, or on connect(), we retry with
          * the next entry in servinfo. */
         //if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
-        if ((s = zeus_queue(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
+        if ((s = zeus_socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
             continue;
         if (anetSetReuseAddr(err,s) == ANET_ERR) goto error;
         if (flags & ANET_CONNECT_NONBLOCK && anetNonBlock(err,s) != ANET_OK)
@@ -347,6 +359,7 @@ end:
     } else {
         return s;
     }
+    // printf("_JL_ anetTcpGenericConnect()\n");
 }
 
 int anetTcpConnect(char *err, char *addr, int port)
@@ -443,6 +456,7 @@ int anetWrite(int fd, char *buf, int count)
 }
 
 static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int backlog) {
+    // printf("_JL_@@@anet.c anetListen\n");
     //if (bind(s,sa,len) == -1) {
     if (zeus_bind(s,sa,len) == -1) {
         anetSetError(err, "bind: %s", strerror(errno));
@@ -451,6 +465,7 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int 
     }
 
     //if (listen(s, backlog) == -1) {
+    fprintf(stderr, "anetListen: listen on qd:%d\n", s);
     if (zeus_listen(s, backlog) == -1) {
         anetSetError(err, "listen: %s", strerror(errno));
         close(s);
@@ -487,12 +502,22 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
     }
     for (p = servinfo; p != NULL; p = p->ai_next) {
         //if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
-        if ((s = zeus_queue(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
+        s = zeus_socket(p->ai_family,p->ai_socktype,p->ai_protocol);
+        fprintf(stderr, "_anetTcpServer: return of zeus_socket:%ld\n", s);
+        if(s == -1){
             continue;
+        }
 
-        if (af == AF_INET6 && anetV6Only(err,s) == ANET_ERR) goto error;
-        if (anetSetReuseAddr(err,s) == ANET_ERR) goto error;
-        if (anetListen(err,s,p->ai_addr,p->ai_addrlen,backlog) == ANET_ERR) s = ANET_ERR;
+        if (af == AF_INET6 && anetV6Only(err,s) == ANET_ERR) {
+            printf("af == AF_INET6 and error\n");
+            goto error;
+        }
+        if (anetSetReuseAddr(err,s) == ANET_ERR) {
+            goto error;
+        }
+        if (anetListen(err,s,p->ai_addr,p->ai_addrlen,backlog) == ANET_ERR) {
+            s = ANET_ERR;
+        }
         goto end;
     }
     if (p == NULL) {
@@ -510,11 +535,14 @@ end:
 
 int anetTcpServer(char *err, int port, char *bindaddr, int backlog)
 {
+    printf("_JL_@@@ anetTcpServer\n");
     return _anetTcpServer(err, port, bindaddr, AF_INET, backlog);
 }
 
 int anetTcp6Server(char *err, int port, char *bindaddr, int backlog)
 {
+    printf("_JL_@@@ anetTcp6Server\n");
+    errno = EAFNOSUPPORT;
     return _anetTcpServer(err, port, bindaddr, AF_INET6, backlog);
 }
 
@@ -538,9 +566,12 @@ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
 
 static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *len) {
     int fd;
+    //zeus_sgarray sga;
     while(1) {
-        //fd = accept(s,sa,len);
-        fd = zeus_accept(s,sa,len);
+        //qt = zeus_pop(s,&sga);
+        fd = zeus_accept(s, sa, len);
+        int real_fd = zeus_qd2fd(fd);
+        fprintf(stderr, "anetGenericAccept accepted qd:%d fd:%d\n", fd, real_fd);
         if (fd == -1) {
             if (errno == EINTR)
                 continue;
@@ -570,6 +601,7 @@ int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
         if (ip) inet_ntop(AF_INET6,(void*)&(s->sin6_addr),ip,ip_len);
         if (port) *port = ntohs(s->sin6_port);
     }
+    //fprintf(stderr, "anetTcpAccept return:%d\n", fd);
     return fd;
 }
 
