@@ -601,7 +601,7 @@ int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
         if (ip) inet_ntop(AF_INET6,(void*)&(s->sin6_addr),ip,ip_len);
         if (port) *port = ntohs(s->sin6_port);
     }
-    //fprintf(stderr, "anetTcpAccept return:%d\n", fd);
+    fprintf(stderr, "anetTcpAccept return:%d\n", fd);
     return fd;
 }
 

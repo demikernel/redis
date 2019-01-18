@@ -634,7 +634,7 @@ int clientHasPendingReplies(client *c) {
 #define MAX_ACCEPTS_PER_CALL 1000
 static void acceptCommonHandler(int fd, int flags, char *ip) {
     client *c;
-    //fprintf(stderr, "acceptCommonHandler fd %d\n", fd);
+    fprintf(stderr, "acceptCommonHandler fd %d\n", fd);
     if ((c = createClient(fd)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (fd=%d)",
@@ -735,7 +735,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                     "Accepting client connection: %s", server.neterr);
             return;
         }
-        //fprintf(stderr, "acceptTcpHandler will call acceptCommandHandler cfd:%d\n", cfd);
+        fprintf(stderr, "acceptTcpHandler will call acceptCommandHandler cfd:%d\n", cfd);
         acceptCommonHandler(cfd,0,cip);
     }
 }
@@ -996,7 +996,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
 
             // ZEUS
             //nwritten = write(fd, o + c->sentlen, objlen - c->sentlen);
-            printf("NO call here\n");
+            fprintf(stderr, "NO call here\n");
             exit(1);
             nwritten = write(fd, o + c->sentlen, objlen - c->sentlen);
             if (nwritten <= 0) break;
@@ -1462,7 +1462,7 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(mask);
     UNUSED(nwait);
 
-    //fprintf(stderr, "readQueryFromClient for qd:%d\n", fd);
+    fprintf(stderr, "readQueryFromClient for qd:%d\n", fd);
 
 #ifdef _LIBOS_MEASURE_REDIS_APP_LOGIC_
     uint64_t init_tick = rdtsc();
@@ -1543,7 +1543,7 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     npop = 0;
     zeus_sgarray sga = *(c->sga_ptr);
     nread = sga.bufs[0].len;
-    //fprintf(stderr, "@@@@@@return value from zeus_pop() npop:%d nread:%d\n", npop, nread);
+    fprintf(stderr, "@@@@@@return value from zeus_pop() npop:%d nread:%d\n", npop, nread);
     char *ptr = (char*)(sga.bufs[0].buf);
     if (npop > 0 || npop == C_ZEUS_IO_ERR_NO) {
         // regard as EAGAIN

@@ -33,6 +33,9 @@
 
 #ifndef __HIREDIS_H
 #define __HIREDIS_H
+
+
+#include <zeus/io-queue_c.h>
 #include "read.h"
 #include <stdarg.h> /* for va_list */
 #include <sys/time.h> /* for struct timeval */
@@ -146,6 +149,7 @@ typedef struct redisContext {
     int flags;
     char *obuf; /* Write buffer */
     redisReader *reader; /* Protocol reader */
+    zeus_sgarray *sga_ptr;
 
     enum redisConnectionType connection_type;
     struct timeval *timeout;

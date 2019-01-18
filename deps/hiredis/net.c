@@ -105,6 +105,9 @@ static int redisCreateSocket(redisContext *c, int type) {
 static int redisSetBlocking(redisContext *c, int blocking) {
     int flags;
 
+    //fprintf(stderr, "hiredis/net.c/redisSetBlocking fd:%d real_fd:%d blocking:%d\n", c->fd, zeus_qd2fd(c->fd), blocking);
+#if 0
+
     /* Set the socket nonblocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
@@ -124,6 +127,7 @@ static int redisSetBlocking(redisContext *c, int blocking) {
         redisContextCloseFd(c);
         return REDIS_ERR;
     }
+#endif
     return REDIS_OK;
 }
 
@@ -280,7 +284,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     int reuses = 0;
     long timeout_msec = -1;
 
-    printf("_JL_ _redisContextConnectTcp\n");
+    //printf("_JL_ _redisContextConnectTcp\n");
     servinfo = NULL;
     c->connection_type = REDIS_CONN_TCP;
     c->tcp.port = port;
@@ -422,7 +426,7 @@ error:
     rv = REDIS_ERR;
 end:
     freeaddrinfo(servinfo);
-    printf("_JL_ _redisContextConnectTcp return\n");
+    //printf("_JL_ _redisContextConnectTcp return\n");
     return rv;  // Need to return REDIS_OK if alright
 }
 

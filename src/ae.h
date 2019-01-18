@@ -142,6 +142,7 @@ typedef struct aeEventLoop {
     zeus_qtoken *wait_qtokens;
     zeus_sgarray *sgarray_list;        // corresponding to qtoken (offset)
     int sga_idx;
+    zeus_sgarray *bench_sga_ptr;
     /////////
 } aeEventLoop;
 
