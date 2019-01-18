@@ -69,14 +69,14 @@ endif
 -include .make-settings
 
 ZEUS_CFLAGS := -I$(DEMETER_INCLUDE)
-ZEUS_LDFLAGS := -L$(dir $(DEMETER_SO)) -Wl,-rpath,$(dir $(DEMETER_SO))
+ZEUS_LDFLAGS := -L$(dir $(DEMETER_LIBOS_SO)) -Wl,-rpath,$(dir $(DEMETER_LIBOS_SO))
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb
 
-ZEUS_LIBS := -l:$(notdir $(DEMETER_SO))
+ZEUS_LIBS := -l:$(notdir $(DEMETER_LIBOS_SO))
 FINAL_CFLAGS += $(ZEUS_CFLAGS)
 FINAL_LDFLAGS += $(ZEUS_LDFLAGS)
 FINAL_LIBS += $(ZEUS_LIBS)
@@ -137,6 +137,13 @@ ifeq ($(MALLOC),jemalloc)
 	DEPENDENCY_TARGETS+= jemalloc
 	FINAL_CFLAGS+= -DUSE_JEMALLOC -I../deps/jemalloc/include
 	FINAL_LIBS+= ../deps/jemalloc/lib/libjemalloc.a
+endif
+
+# if $(MALLOC) contains a pathname to a file that exists, link against it.
+# todo: we should install this library rather than use `rpath` to find it.
+ifneq (,$(wildcard $(MALLOC)))
+	FINAL_LDFLAGS+= -L$(dir $(MALLOC)) -Wl,-rpath,$(dir $(MALLOC))
+	FINAL_LIBS+= -l:$(notdir $(MALLOC))
 endif
 
 REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
