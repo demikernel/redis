@@ -32,18 +32,8 @@
 #include <sys/uio.h>
 #include <math.h>
 #include <ctype.h>
-#include <sys/time.h>
-#include "../measure.h"
 
 static void setProtocolError(const char *errstr, client *c, long pos);
-
-static inline uint64_t rdtsc(void)
-{
-    uint64_t eax, edx;
-    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
-    return (edx << 32) | eax;
-}
-
 
 /* Return the size consumed from the allocator, for the specified SDS string,
  * including internal fragmentation. This function is used in order to compute
@@ -79,37 +69,30 @@ int listMatchObjects(void *a, void *b) {
 
 client *createClient(int fd) {
     client *c = zmalloc(sizeof(client));
-    if(REDIS_ZEUS_DEBUG) printf("createClient fd:%d\n", fd);
-    fprintf(stderr, "createClient for qd:%d realfd:%d\n", fd, zeus_qd2fd(fd));
 
     /* passing -1 as fd it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
-    /**
     if (fd != -1) {
+        int ret;
+        dmtr_qtoken_t qt;
+
         anetNonBlock(NULL,fd);
         anetEnableTcpNoDelay(NULL,fd);
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
-        if (aeCreateFileEvent(server.el,fd,AE_READABLE,
+        ret = dmtr_pop(&qt, qd);
+        if (0 != ret ||
+            aeCreateQueueEvent(server.el,qt,
             readQueryFromClient, c) == AE_ERR)
         {
-            close(fd);
+            dmtr_close(fd);
             zfree(c);
             return NULL;
         }
-    }**/
-
-    /* _JL_ */
-    if(fd != -1){
-        add_queue_status_item(server.el, fd, LIBOS_Q_STATUS_read_nopop);
-        struct qd_status *ret_qd_status = find_queue_status_item(server.el, fd);
-        (ret_qd_status->status_token_arr)[2] = c;
     }
-    //////////
 
-    fprintf(stderr, "createClient before select DB\n");
     selectDb(c,0);
     uint64_t client_id;
     atomicGetIncr(server.next_client_id,client_id,1);
@@ -331,9 +314,7 @@ void _addReplyStringToList(client *c, const char *s, size_t len) {
  * -------------------------------------------------------------------------- */
 
 void addReply(client *c, robj *obj) {
-    if(REDIS_ZEUS_DEBUG) printf("addReply list_len:%d\n", listLength(server.clients_pending_write));
     if (prepareClientToWrite(c) != C_OK) return;
-    if(REDIS_ZEUS_DEBUG) printf("addReply, has prepare client to write, list_len:%d\n", listLength(server.clients_pending_write));
 
     /* This is an important place where we can avoid copy-on-write
      * when there is a saving child running, avoiding touching the
@@ -634,7 +615,6 @@ int clientHasPendingReplies(client *c) {
 #define MAX_ACCEPTS_PER_CALL 1000
 static void acceptCommonHandler(int fd, int flags, char *ip) {
     client *c;
-    fprintf(stderr, "acceptCommonHandler fd %d\n", fd);
     if ((c = createClient(fd)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (fd=%d)",
@@ -642,12 +622,6 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
         close(fd); /* May be already closed, just ignore errors */
         return;
     }
-
-    /* _JL_ save the client here */
-    struct qd_status *qd_status_ptr = find_queue_status_item(server.el, fd);
-    qd_status_ptr->status_token_arr[2] = (zeus_qtoken)(c);
-
-
     /* If maxclient directive is set and this is one client more... close the
      * connection. Note that we create the client instead to check before
      * for this condition, since now the socket is already set in non-blocking
@@ -711,8 +685,6 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
 
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
-    // _JL_ here, we can only accept one client at a time
-    max = 1;
     char cip[NET_IP_STR_LEN];
     UNUSED(el);
     UNUSED(mask);
@@ -720,22 +692,13 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     while(max--) {
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
-        fprintf(stderr, "acceptTcpHandler return cfd:%d\n", cfd);
-        if(cfd == ANET_ERR){
-			if (errno != EWOULDBLOCK){
-                 serverLog(LL_WARNING,
-                     "Accepting client connection: %s", server.neterr);
-            return;
-            }
-        }
-        // record cfd
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
                 serverLog(LL_WARNING,
                     "Accepting client connection: %s", server.neterr);
             return;
         }
-        fprintf(stderr, "acceptTcpHandler will call acceptCommandHandler cfd:%d\n", cfd);
+        serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
         acceptCommonHandler(cfd,0,cip);
     }
 }
@@ -822,7 +785,6 @@ void unlinkClient(client *c) {
 
 void freeClient(client *c) {
     listNode *ln;
-    //printf("@@@@@@freeClient()\n");
 
     /* If it is our master that's beging disconnected we should make sure
      * to cache the state to try a partial resynchronization later.
@@ -939,45 +901,28 @@ void freeClientsInAsyncFreeQueue(void) {
 /* Write data in output buffers to client. Return C_OK if the client
  * is still valid after the call, C_ERR if it was freed. */
 int writeToClient(int fd, client *c, int handler_installed) {
-    ssize_t nwritten = 0, totwritten = 0;
-    ssize_t npush;
+    ssize_t totwritten = 0;
     size_t objlen;
     sds o;
-    if(REDIS_ZEUS_DEBUG) printf("networking.c/writeToClient fd:%d\n", fd);
+    int ret;
 
     while(clientHasPendingReplies(c)) {
         if (c->bufpos > 0) {
-            //printf("@@@@@@writeToClient/write()\n");
-            //nwritten = write(fd,c->buf+c->sentlen,c->bufpos-c->sentlen);
-            // ZEUS
-            zeus_sgarray sga;
-            sga.num_bufs = 1;
-            sga.bufs[0].buf = (zeus_ioptr)(c->buf+c->sentlen);
-            sga.bufs[0].len = c->bufpos-c->sentlen;
-            if(REDIS_ZEUS_DEBUG) printf("before zeus_push\n");
-            //nwritten = zeus_push(fd, &sga);
-#ifdef _LIBOS_MEASURE_REDIS_NETWORKING_PUSH_ID_
-            uint64_t rcd_start, rcd_end;
-            rcd_start = rdtsc();
-#endif
-            npush = zeus_push(fd, &sga);
-#ifdef _LIBOS_MEASURE_REDIS_NETWORKING_PUSH_ID_
-            rcd_end = rdtsc();
-            printf("mpoint:%d time_tick:%lu\n", (_LIBOS_MEASURE_REDIS_NETWORKING_PUSH_ID_), (rcd_end - rcd_start));
-#endif
-            if(npush == 0){
-                // push success
-                nwritten = sga.bufs[0].len;
-                if(REDIS_ZEUS_DEBUG) printf("zeus_push success in server\n");
-            }else{
-                // push return qtoken
-                nwritten = sga.bufs[0].len;
-            }
-            if(REDIS_ZEUS_DEBUG) printf("after zeus_push npush:%d\n", npush);
+            dmtr_sgarray_t sga;
+            dmtr_qtoken_t qt;
+            size_t len;
 
-            if (nwritten <= 0) break;
-            c->sentlen += nwritten;
-            totwritten += nwritten;
+            len = c->bufpos-c->sentlen;
+            memset(&sga, 0, sizeof(sga));
+            sga.sga_numsegs = 1;
+            sga.sga_segs[1].sgaseg_buf = c->buf+c->sentlen;
+            sga.sga_segs[1].sgaseg_len = len;
+            ret = dmtr_push(&qt, fd, &sga);
+            if (0 != ret) break;
+            ret = dmtr_wait(NULL, qt);
+            if (0 != ret) break;
+            c->sentlen += len;
+            totwritten += len;
 
             /* If the buffer was sent, set bufpos to zero to continue with
              * the remainder of the reply. */
@@ -986,6 +931,10 @@ int writeToClient(int fd, client *c, int handler_installed) {
                 c->sentlen = 0;
             }
         } else {
+            dmtr_sgarray_t sga;
+            dmtr_qtoken_t qt;
+            size_t len;
+
             o = listNodeValue(listFirst(c->reply));
             objlen = sdslen(o);
 
@@ -994,14 +943,17 @@ int writeToClient(int fd, client *c, int handler_installed) {
                 continue;
             }
 
-            // ZEUS
-            //nwritten = write(fd, o + c->sentlen, objlen - c->sentlen);
-            fprintf(stderr, "NO call here\n");
-            exit(1);
-            nwritten = write(fd, o + c->sentlen, objlen - c->sentlen);
-            if (nwritten <= 0) break;
-            c->sentlen += nwritten;
-            totwritten += nwritten;
+            len = objlen - c->sentlen;
+            memset(&sga, 0, sizeof(sga));
+            sga.sga_numsegs = 1;
+            sga.sga_segs[1].sgaseg_buf = o + c->sentlen;
+            sga.sga_segs[1].sgaseg_len = len;
+            ret = dmtr_push(&qt, fd, &sga);
+            if (0 != ret) break;
+            ret = dmtr_wait(NULL, qt);
+            if (0 != ret) break;
+            c->sentlen += len;
+            totwritten += len;
 
             /* If we fully sent the object on head go to the next one */
             if (c->sentlen == objlen) {
@@ -1031,10 +983,9 @@ int writeToClient(int fd, client *c, int handler_installed) {
              zmalloc_used_memory() < server.maxmemory) &&
             !(c->flags & CLIENT_SLAVE)) break;
     }
-    if(REDIS_ZEUS_DEBUG) printf("writeToClient, endofpush() nwritten:%d\n", nwritten);
     server.stat_net_output_bytes += totwritten;
-    if (nwritten == -1) {
-        if (errno == EAGAIN) {
+    if (ret != 0) {
+        if (ret == EAGAIN) {
             nwritten = 0;
         } else {
             serverLog(LL_VERBOSE,
@@ -1052,7 +1003,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
     }
     if (!clientHasPendingReplies(c)) {
         c->sentlen = 0;
-        if (handler_installed) aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
+        if (handler_installed) aeDeleteQueueEvent(server.el,c->fd);
 
         /* Close connection after entire reply has been sent. */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
@@ -1060,7 +1011,6 @@ int writeToClient(int fd, client *c, int handler_installed) {
             return C_ERR;
         }
     }
-    if(REDIS_ZEUS_DEBUG) printf("return from writeToClient\n");
     return C_OK;
 }
 
@@ -1068,7 +1018,6 @@ int writeToClient(int fd, client *c, int handler_installed) {
 void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(el);
     UNUSED(mask);
-    if(REDIS_ZEUS_DEBUG) printf("sendReplyToClient\n");
     writeToClient(fd,privdata,1);
 }
 
@@ -1080,7 +1029,6 @@ int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
     int processed = listLength(server.clients_pending_write);
-    //printf("handleClientsWithPendingWrites processed %d\n", processed);
 
     listRewind(server.clients_pending_write,&li);
     while((ln = listNext(&li))) {
@@ -1393,7 +1341,6 @@ int processMultibulkBuffer(client *c) {
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
 void processInputBuffer(client *c) {
-    if(REDIS_ZEUS_DEBUG) printf("processInputBuffer\n");
     server.current_client = c;
     /* Keep processing while there is something in the input buffer */
     while(sdslen(c->querybuf)) {
@@ -1454,21 +1401,23 @@ void processInputBuffer(client *c) {
     server.current_client = NULL;
 }
 
-void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
+void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
     client *c = (client*) privdata;
-    int nread, readlen, npop, nwait;
+    int nread, readlen;
     size_t qblen;
+    const dmtr_sgarray_t *sga = NULL;
+    size_t nread;
     UNUSED(el);
-    UNUSED(mask);
-    UNUSED(nwait);
 
-    fprintf(stderr, "readQueryFromClient for qd:%d\n", fd);
+    if (NULL == qr) {
+        fprintf(stderr, "`qr` is not allowed to be `NULL`\n");
+        abort();
+    }
 
-#ifdef _LIBOS_MEASURE_REDIS_APP_LOGIC_
-    uint64_t init_tick = rdtsc();
-#endif
-
-    //if(REDIS_ZEUS_DEBUG) printf("networking.c/readQueryFromClient fd:%d\n", fd);
+    if (qr.qr_opcode != DMTR_OPC_POP) {
+        fprintf(stderr, "`qr` must be the result of a `pop` operation.\n");
+        abort();
+    }
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
@@ -1488,86 +1437,25 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
-#ifdef _LIBOS_MEASURE_REDIS_APP_LOGIC_
-    uint64_t make_room_tick = rdtsc();
-#endif
-    //printf("netoworking.c@@@@@@readQueryFromClient/read(%d)\n", fd);
-    //nread = read(fd, c->querybuf+qblen, readlen);
-    /**
-    zeus_sgarray sga;
-    // Use zeus_pop
-    npop = zeus_pop(fd, &sga);
-    if (npop == 0){
-        nread = sga.bufs[0].len;
-        printf("@@@@@@return value from zeus_pop() npop:%d nread:%d\n", npop, nread);
-    }else{
-        nread = -1;
-        // nwait = zeus_wait(npop, &sga);
-        // nread = sga.bufs[0].len;
-        // printf("return value of nwait:%d nread:%d\n", nwait, nread);
+
+    sga = &qr->qr_value.sga;
+    if (sga->sga_numsegs != 1) {
+        fprintf(stderr, "`readQueryFromClient()` only supports single segment sga objects .\n");
+        abort();
     }
-    fprintf(stderr, "@@@@@@return value from zeus_pop() npop:%d nread:%d\n", npop, nread);
-    **/
 
-#ifdef _LIBOS_MEASURE_REDIS_NETWORKING_POP_ID_
-    uint64_t rcd_start, rcd_end;
-    rcd_start = rdtsc();
-#endif
-    // use peek
-    //npop = zeus_peek(fd, &sga);
-
-#ifdef _LIBOS_MEASURE_REDIS_NETWORKING_POP_ID_
-    rcd_end = rdtsc();
-    if(npop > 0){
-        fprintf(stderr,"mpoint:%d time_tick:%lu\n", (_LIBOS_MEASURE_REDIS_NETWORKING_POP_ID_), (rcd_end - rcd_start));
+    nread = sga->sga_segs[0].sgaseg_len;
+    if (readlen < nread) {
+        fprintf(stderr, "incorrect segment length.\n");
+        abort();
     }
-#endif
-    /**
-    if(npop <= 0){
-        // make sure handled as EAGAIN
-        nread = -1;
-        npop = 1;
-    }else{
-        nread = npop;
-        if(nread != sga.bufs[0].len){
-            printf("Error, nread:%d, len:%d\n", nread, sga.bufs[0].len);
-            exit(1);
-        }
-        npop = 0;
-    }**/
 
+    memcpy(c->querybuf+qblen, sga->sga_segs[0].sgaseg_buf, nread);
 
-#ifdef _LIBOS_MEASURE_REDIS_APP_LOGIC_
-    uint64_t start_process_tick = rdtsc();
-#endif
-    npop = 0;
-    zeus_sgarray sga = *(c->sga_ptr);
-    nread = sga.bufs[0].len;
-    fprintf(stderr, "@@@@@@return value from zeus_pop() npop:%d nread:%d\n", npop, nread);
-    char *ptr = (char*)(sga.bufs[0].buf);
-    if (npop > 0 || npop == C_ZEUS_IO_ERR_NO) {
-        // regard as EAGAIN
-        return;
-    }else if(nread != -1 && nread != 0) {
-        memcpy(c->querybuf+qblen, ptr, sga.bufs[0].len);
-    }
-    if (nread == -1) {
-        if (errno == EAGAIN) {
-            return;
-        } else {
-            serverLog(LL_VERBOSE, "Reading from client: %s",strerror(errno));
-            freeClient(c);
-            return;
-        }
-    } else if (nread == 0) {
-        serverLog(LL_VERBOSE, "Client closed connection");
-        freeClient(c);
-        return;
-    } else if (c->flags & CLIENT_MASTER) {
+    if (c->flags & CLIENT_MASTER) {
         /* Append the query buffer to the pending (not applied) buffer
          * of the master. We'll use this buffer later in order to have a
          * copy of the string applied by the last command executed. */
-        if (REDIS_ZEUS_DEBUG) serverLog(LL_WARNING,"c->flags is CLIENT_MASTE %d\n", nread);
         c->pending_querybuf = sdscatlen(c->pending_querybuf,
                                         c->querybuf+qblen,nread);
     }
@@ -1595,7 +1483,6 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
      * the sub-slaves and to the replication backlog. */
     if (!(c->flags & CLIENT_MASTER)) {
         processInputBuffer(c);
-        if(REDIS_ZEUS_DEBUG) printf("after process Input buffer\n");
     } else {
         size_t prev_offset = c->reploff;
         processInputBuffer(c);
@@ -1606,13 +1493,6 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
             sdsrange(c->pending_querybuf,applied,-1);
         }
     }
-
-#ifdef _LIBOS_MEASURE_REDIS_APP_LOGIC_
-    uint64_t end_process_tick = rdtsc();
-    uint64_t make_room_overhead = make_room_tick - init_tick;
-    fprintf(stdout, "overhead_prior:%lu time_tick_for_req(Process):%lu\n", 
-            make_room_overhead, make_room_overhead + (end_process_tick - start_process_tick));
-#endif
 }
 
 void getClientsMaxBuffers(unsigned long *longest_output_list,
@@ -2196,7 +2076,6 @@ int clientsArePaused(void) {
 int processEventsWhileBlocked(void) {
     int iterations = 4; /* See the function top-comment. */
     int count = 0;
-    printf("processEventsWhileBlocked\n");
     while (iterations--) {
         int events = 0;
         events += aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);

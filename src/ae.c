@@ -39,11 +39,13 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <alloca.h>
 
-//#include "ae.h"
-#include "server.h"
+#include "ae.h"
 #include "zmalloc.h"
 #include "config.h"
+
+#include <dmtr/wait.h>
 
 /* Include the best multiplexing layer supported by this system.
  * The following should be ordered by performances, descending. */
@@ -61,53 +63,6 @@
     #endif
 #endif
 
-
-int add_queue_status_item(aeEventLoop *eventLoop, int qd, int status) {
-    int qd_status_index = eventLoop->qd_status_array_index;
-    struct qd_status *new_status = &(eventLoop->qd_status_array[qd_status_index]);
-    eventLoop->qd_status_array_index++;
-    // initialize queue status
-    new_status->qd = qd;
-    (new_status->status_token_arr)[0] = status;
-    (new_status->status_token_arr)[1] = -1;
-    HASH_ADD_INT(eventLoop->qd_status_map, qd, new_status);
-    return qd_status_index;
-}
-
-struct qd_status* find_queue_status_item(aeEventLoop* eventLoop, int qd) {
-    struct qd_status *qd_status_ptr;
-    HASH_FIND_INT(eventLoop->qd_status_map, &qd, qd_status_ptr);
-    return qd_status_ptr;
-}
-
-int del_queue_status_item(aeEventLoop *eventLoop, int qd){
-    struct qd_status *qd_status_ptr = find_queue_status_item(eventLoop, qd);
-    if(qd_status_ptr == NULL){
-        return -1;
-    }
-    HASH_DEL(eventLoop->qd_status_map, qd_status_ptr);
-}
-
-zeus_sgarray* use_sgarray(aeEventLoop *eventLoop){
-    zeus_sgarray *sga_ptr;
-    if(eventLoop->sga_idx < (eventLoop->setsize*(_SGA_ALLOC_FACTOR))){
-        sga_ptr = &(eventLoop->sgarray_list[eventLoop->sga_idx]);
-        eventLoop->sga_idx++;
-    }else{
-        fprintf(stderr, "ERROR no avaiable sga\n");
-        // error here
-        return NULL;
-    }
-    //memset(sga_ptr, 0, sizeof(zeus_sgarray));
-    sga_ptr->num_bufs = 0;
-    //fprintf(stderr, "return sga_ptr:%p num_bufs:%d\n", sga_ptr, sga_ptr->num_bufs);
-    return sga_ptr;
-}
-
-int return_sgarray(aeEventLoop *eventLoop, zeus_sgarray* sga){
-    return -1;
-}
-
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
@@ -124,21 +79,6 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->maxfd = -1;
     eventLoop->beforesleep = NULL;
     eventLoop->aftersleep = NULL;
-    /* _JL_ init qd status map */
-    // NOTE events always use fd as index
-    eventLoop->qd_status_map = NULL;  /* required init for hash data structure */
-    eventLoop->qd_status_array = zmalloc(sizeof(struct qd_status)*setsize);
-    eventLoop->wait_qtokens = zmalloc(sizeof(zeus_qtoken)*setsize);
-    eventLoop->sgarray_list = zmalloc(sizeof(zeus_sgarray)*(setsize*(_SGA_ALLOC_FACTOR)));
-    eventLoop->qd_status_array_index = 0;
-    eventLoop->sga_idx = 0;
-    for(i = 0; i < setsize; i++){
-        (eventLoop->qd_status_array[i].status_token_arr)[0] = LIBOS_Q_STATUS_NONE;
-        (eventLoop->qd_status_array[i].status_token_arr)[1] = -1;
-        (eventLoop->qd_status_array[i].status_token_arr)[2] = 0;
-    }
-    /**************************/
-
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
@@ -150,9 +90,6 @@ err:
     if (eventLoop) {
         zfree(eventLoop->events);
         zfree(eventLoop->fired);
-        zfree(eventLoop->qd_status_array);
-        zfree(eventLoop->wait_qtokens);
-        zfree(eventLoop->sgarray_list);
         zfree(eventLoop);
     }
     return NULL;
@@ -181,19 +118,10 @@ int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
     eventLoop->fired = zrealloc(eventLoop->fired,sizeof(aeFiredEvent)*setsize);
     eventLoop->setsize = setsize;
 
-    /* _JL_ re-init in re-size */
-    eventLoop->qd_status_array = zrealloc(eventLoop->qd_status_array,sizeof(struct qd_status)*setsize);
-    eventLoop->wait_qtokens = zrealloc(eventLoop->wait_qtokens, sizeof(zeus_qtoken)*setsize);
-    eventLoop->sgarray_list = zrealloc(eventLoop->sgarray_list, sizeof(zeus_sgarray)*(setsize*(_SGA_ALLOC_FACTOR)));
-
     /* Make sure that if we created new slots, they are initialized with
      * an AE_NONE mask. */
-    for (i = eventLoop->maxfd+1; i < setsize; i++) {
+    for (i = eventLoop->maxfd+1; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
-        (eventLoop->qd_status_array[i].status_token_arr)[0] = LIBOS_Q_STATUS_NONE;
-        (eventLoop->qd_status_array[i].status_token_arr)[1] = -1;
-        (eventLoop->qd_status_array[i].status_token_arr)[2] = 0;
-    }
     return AE_OK;
 }
 
@@ -201,11 +129,6 @@ void aeDeleteEventLoop(aeEventLoop *eventLoop) {
     aeApiFree(eventLoop);
     zfree(eventLoop->events);
     zfree(eventLoop->fired);
-    /* _JL_ */
-    zfree(eventLoop->qd_status_array);
-    zfree(eventLoop->wait_qtokens);
-    zfree(eventLoop->sgarray_list);
-    //////////
     zfree(eventLoop);
 }
 
@@ -213,26 +136,54 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
+int aeCreateQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt, aeQueueProc *qProc, void *clientData) {
+    if (NULL == eventLoop) {
+        return AE_ERR;
+    }
+
+    if (0 == qt) {
+        return AE_ERR;
+    }
+
+    if (NULL == qProc) {
+        return AE_ERR;
+    }
+
+    aeQueueEvent *e = (aeQueueEvent *)zmalloc(sizeof(struct aeQueueEvent));
+    e->qt = qt;
+    e->qProc = qProc;
+    e->clientData = clientData;
+    HASH_ADD(hh, eventLoop->qEvents, qt, sizeof(qt), e);
+    return AE_OK;
+}
+
+void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt) {
+    if (NULL == eventLoop) {
+        fprintf(stderr, "`eventLoop` cannot be `NULL`.\n");
+        abort();
+    }
+
+    if (0 == qt) {
+        aeQueueEvent *e, *tmp;
+        HASH_ITER(hh, eventLoop->qEvents, e, tmp) {
+            HASH_DEL(eventLoop->qEvents, e);
+            zfree(e);
+        }
+    } else {
+        aeQueueEvent *e = NULL;
+        HASH_FIND(hh, eventLoop->qEvents, &qt, sizeof(qt), e);
+        if (NULL == e) {
+            return;
+        }
+
+        HASH_DEL(eventLoop->qEvents, e);
+        zfree(e);
+    }
+}
+
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
-    /**
-     * _JL_:
-     * we would not create event here,
-     * the return of wait any essentially
-     *
-     **/
-#if 0
-    int qd = fd;
-    int cur_fd = zeus_qd2fd(qd);
-    if(cur_fd < 0){
-        // assume invalid fd here
-        fprintf(stderr, "cannot find the qd in libos qd:%d\n", qd);
-        fd = qd;
-    }else{
-        fd = cur_fd;
-    }
-
     if (fd >= eventLoop->setsize) {
         errno = ERANGE;
         return AE_ERR;
@@ -247,14 +198,11 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     fe->clientData = clientData;
     if (fd > eventLoop->maxfd)
         eventLoop->maxfd = fd;
-#endif
     return AE_OK;
 }
 
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
 {
-#if 0
-    // printf("ae.c/aeDeleteEvent @@@@@@fd:%d\n", fd);
     if (fd >= eventLoop->setsize) return;
     aeFileEvent *fe = &eventLoop->events[fd];
     if (fe->mask == AE_NONE) return;
@@ -273,7 +221,6 @@ void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
             if (eventLoop->events[j].mask != AE_NONE) break;
         eventLoop->maxfd = j;
     }
-#endif
 }
 
 int aeGetFileEvents(aeEventLoop *eventLoop, int fd) {
@@ -456,7 +403,6 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
-    //printf("ae.c/aeProcessEvents @@@@@@\n");
 
     /* Nothing to do? return ASAP */
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
@@ -505,132 +451,33 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
         }
 
-        /* Call the multiplexing API, will return only on timeout or when
-         * some event fires. */
-        //numevents = aeApiPoll(eventLoop, tvp);
-        //////////////////////////////////////////////////////////////////////////////////////////////////
-        /* _JL_ multiplexing here */
-        //zeus_sgarray sga;
-        int ii, jj;
-        int qtoken_index = 0;
-        int sga_index = 0;
-        struct qd_status *qd_status_iterptr;
-        // set numevents to 0, and then redis event mechanism will not be triggered
-        numevents = 0;
-        //zeus_sgarray *sga_ptr = malloc(sizeof(zeus_sgarray));
-        //zeus_sgarray *sga_ptr = &(eventLoop->sgarray_list[0]);
-        zeus_sgarray *sga_ptr;
-        for(qd_status_iterptr = eventLoop->qd_status_map; qd_status_iterptr != NULL;
-                qd_status_iterptr = qd_status_iterptr->hh.next){
-            if((qd_status_iterptr->status_token_arr)[0] == LIBOS_Q_STATUS_listen_nopop){
-                // qd is listening and pop not called
-                sga_ptr = use_sgarray(eventLoop);
-                zeus_qtoken qt = zeus_pop(qd_status_iterptr->qd, sga_ptr);
-                //fprintf(stderr, "after zeus_pop qt:%lu\n", qt);
-                if(qt == 0){
-                    // we could call accept here if qt == 0
-                    acceptTcpHandler(eventLoop, qd_status_iterptr->qd, NULL, 0);
-                    (qd_status_iterptr->status_token_arr)[0] = LIBOS_Q_STATUS_listen_nopop;
-                    processed++;
-                    qtoken_index = 0;
-                    break;
-                }else{
-                    //fprintf(stderr, "aeProcessEvents, listen qd:%d from nonpop to inwait real_fd:%d\n", qd_status_iterptr->qd, zeus_qd2fd(qd_status_iterptr->qd));
-                    // save the qt for accept
-                    qd_status_iterptr->status_token_arr[1] = qt;
-                    qd_status_iterptr->status_token_arr[0] = LIBOS_Q_STATUS_listen_inwait;
-                    // enqueue the qtoken
-                    eventLoop->wait_qtokens[qtoken_index] = qt;
-                    qtoken_index++;
-                    continue;
-                }
-            }
-            if((qd_status_iterptr->status_token_arr)[0] == LIBOS_Q_STATUS_listen_inwait){
-                zeus_qtoken qt = (qd_status_iterptr->status_token_arr)[1];
-                eventLoop->wait_qtokens[qtoken_index] = qt;
-                qtoken_index++;
-                continue;
-            }
-            if((qd_status_iterptr->status_token_arr)[0] == LIBOS_Q_STATUS_read_nopop){
-                //fprintf(stderr, "before pop for read qd:%d\n", qd_status_iterptr->qd);
-                sga_ptr = use_sgarray(eventLoop);
-                zeus_qtoken qt = zeus_pop(qd_status_iterptr->qd, sga_ptr);
-                //fprintf(stderr, "after pop for read qt:%lu\n", qt);
-                if(qt == 0){
-                    zeus_qtoken client_addr = qd_status_iterptr->status_token_arr[2];
-                    client *c = (client*)(client_addr);
-                    if(c == NULL){
-                        fprintf(stderr, "ERROR, client not created for qd:%d\n",
-                                qd_status_iterptr->qd);
-                    }
-                    c->sga_ptr = sga_ptr;
-                    // for bench-client
-                    eventLoop->bench_sga_ptr = sga_ptr;
-                    /////////
-                    //sga_ptr++;
-                    readQueryFromClient(eventLoop, qd_status_iterptr->qd, c, 0);
-                    (qd_status_iterptr->status_token_arr)[0] = LIBOS_Q_STATUS_read_nopop;
-                    qtoken_index = 0;
-                    processed++;
-                    break;
-                }else{
-                    // save the qt for read
-                    qd_status_iterptr->status_token_arr[1] = qt;
-                    qd_status_iterptr->status_token_arr[0] = LIBOS_Q_STATUS_read_inwait;
-                    // enqueue qtoken
-                    eventLoop->wait_qtokens[qtoken_index] = qt;
-                    qtoken_index++;
-                    continue;
-                }
+        {
+            size_t eventCount = HASH_COUNT(eventLoop->qEvents);
+            dmtr_qtoken_t *qts = (dmtr_qtoken_t *)alloca(sizeof(dmtr_qtoken_t) * eventCount);
+            size_t i = 0;
+            for (aeQueueEvent *e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
+                qts[i] = e->qt;
             }
 
-            if((qd_status_iterptr->status_token_arr)[0] == LIBOS_Q_STATUS_read_inwait){
-                //fprintf(stderr, "LIBOS_Q_STATUS_read_inwait qd:%d\n",qd_status_iterptr->qd);
-                zeus_qtoken qt = (qd_status_iterptr->status_token_arr)[1];
-                eventLoop->wait_qtokens[qtoken_index] = qt;
-                qtoken_index++;
-                continue;
+            dmtr_qresult_t qr;
+            memset(&qr, 0, sizeof(qr));
+            int ret = dmtr_wait_any(&qr, NULL, qts, eventCount);
+            if (0 != ret) {
+                fprintf(stderr, "unexpected failure to wait on queue token");
+                abort();
             }
+
+            // find the event that completed.
+            aeQueueEvent *e = NULL;
+            HASH_FIND(hh, eventLoop->qEvents, &qr.qr_qt, sizeof(qr.qr_qt), e);
+            // invoke the callback
+            e->qProc(eventLoop, &qr, e->clientData);
+            aeDeleteQueueEvent(eventLoop, e->qt);
         }
-        for(ii = 0; ii < qtoken_index; ii++){
-            //fprintf(stderr, "qtoken_index:%d qtoken is:%lu\n", ii, eventLoop->wait_qtokens[ii]);
-        }
-        // now wait_any
-        if(qtoken_index > 0){
-            int ret_offset = -1, ret_qd = 0;
-            sga_ptr = use_sgarray(eventLoop);
-            ssize_t ret = zeus_wait_any(eventLoop->wait_qtokens, qtoken_index, &ret_offset, &ret_qd, sga_ptr);
-            //fprintf(stderr, "waitany return qd:%d ret_value:%ld\n", ret_qd, ret);
-            struct qd_status *ret_qd_status = find_queue_status_item(eventLoop, ret_qd);
-            if(ret_qd_status == NULL){
-                fprintf(stderr, "ERROR ret_qd_status is NULL for qd:%d\n", ret_qd);
-                exit(1);
-            }
-            if(ret_qd_status->status_token_arr[0] == LIBOS_Q_STATUS_listen_inwait){
-                //fprintf(stderr, "aeProcessEvents wait return qd:%d status is listen_inwait\n", ret_qd);
-                acceptTcpHandler(eventLoop, ret_qd_status->qd, NULL, 0);
-                (ret_qd_status->status_token_arr)[0] = LIBOS_Q_STATUS_listen_nopop;
-            }else if(ret_qd_status->status_token_arr[0] == LIBOS_Q_STATUS_read_inwait){
-                //fprintf(stderr, "aeProcessEvents wait return qd:%d status is read_inwait\n", ret_qd);
-                zeus_qtoken client_addr = ret_qd_status->status_token_arr[2];
-                client *c = (client*)(client_addr);
-                if(c == NULL){
-                    fprintf(stderr, "ERROR, client not created for qd:%d\n",
-                            ret_qd_status->qd);
-                }
-                //fprintf(stderr, "aeProcessEvent, assign asg_ptr:%p to client_addr:%p\n", sga_ptr, c);
-                c->sga_ptr = sga_ptr;
-                // for bench-client
-                eventLoop->bench_sga_ptr = sga_ptr;
-                /////////
-                //sga_ptr++;
-                readQueryFromClient(eventLoop, ret_qd_status->qd, c, 0);
-                (ret_qd_status->status_token_arr)[0] = LIBOS_Q_STATUS_read_nopop;
-            }else{
-                // ERROR
-            }
-        }
-        //////////////////////////////////////////////////////////////////////////////////////////////////
+
+        /* Call the multiplexing API, will return only on timeout or when
+         * some event fires. */
+        numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
@@ -638,10 +485,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         for (j = 0; j < numevents; j++) {
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
-            fprintf(stderr, "fd:%d\n", eventLoop->fired[j].fd);
             int mask = eventLoop->fired[j].mask;
             int fd = eventLoop->fired[j].fd;
-            int qd = eventLoop->fired[j].qd;
             int fired = 0; /* Number of events fired for current fd. */
 
             /* Normally we execute the readable event first, and the writable
@@ -657,21 +502,21 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * before replying to a client. */
             int invert = fe->mask & AE_BARRIER;
 
-	        /* Note the "fe->mask & mask & ..." code: maybe an already
+	    /* Note the "fe->mask & mask & ..." code: maybe an already
              * processed event removed an element that fired and we still
              * didn't processed, so we check if the event is still valid.
              *
              * Fire the readable event if the call sequence is not
              * inverted. */
             if (!invert && fe->mask & mask & AE_READABLE) {
-                fe->rfileProc(eventLoop,qd,fe->clientData,mask);
+                fe->rfileProc(eventLoop,fd,fe->clientData,mask);
                 fired++;
             }
 
             /* Fire the writable event. */
             if (fe->mask & mask & AE_WRITABLE) {
                 if (!fired || fe->wfileProc != fe->rfileProc) {
-                    fe->wfileProc(eventLoop,qd,fe->clientData,mask);
+                    fe->wfileProc(eventLoop,fd,fe->clientData,mask);
                     fired++;
                 }
             }
@@ -680,7 +525,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * after the writable one. */
             if (invert && fe->mask & mask & AE_READABLE) {
                 if (!fired || fe->wfileProc != fe->rfileProc) {
-                    fe->rfileProc(eventLoop,qd,fe->clientData,mask);
+                    fe->rfileProc(eventLoop,fd,fe->clientData,mask);
                     fired++;
                 }
             }
@@ -691,6 +536,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     /* Check time events */
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
+
     return processed; /* return the number of processed file/time events */
 }
 
@@ -718,14 +564,10 @@ int aeWait(int fd, int mask, long long milliseconds) {
 
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
-    int ret;
     while (!eventLoop->stop) {
         if (eventLoop->beforesleep != NULL)
             eventLoop->beforesleep(eventLoop);
-        if(ret > 2){
-            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
-        }
-        ret = aeProcessEvents(eventLoop, AE_ALL_EVENTS|AE_CALL_AFTER_SLEEP);
+        aeProcessEvents(eventLoop, AE_ALL_EVENTS|AE_CALL_AFTER_SLEEP);
     }
 }
 

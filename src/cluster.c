@@ -484,7 +484,7 @@ void clusterInit(void) {
         exit(1);
     }
 
-    if (listenToPortOrig(server.port+CLUSTER_PORT_INCR,
+    if (listenToPort(server.port+CLUSTER_PORT_INCR,
         server.cfd,&server.cfd_count) == C_ERR)
     {
         exit(1);

@@ -71,18 +71,19 @@ static void aeApiFree(aeEventLoop *eventLoop) {
 }
 
 static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
-    //aeApiState *state = eventLoop->apidata;
-    //struct epoll_event ee = {0}; /* avoid valgrind warning */
+    aeApiState *state = eventLoop->apidata;
+    struct epoll_event ee = {0}; /* avoid valgrind warning */
     /* If the fd was already monitored for some event, we need a MOD
      * operation. Otherwise we need an ADD operation. */
-    //int op = eventLoop->events[fd].mask == AE_NONE ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+    int op = eventLoop->events[fd].mask == AE_NONE ?
+            EPOLL_CTL_ADD : EPOLL_CTL_MOD;
 
-    //ee.events = 0;
-    //mask |= eventLoop->events[fd].mask; /* Merge old events */
-    //if (mask & AE_READABLE) ee.events |= EPOLLIN;
-    //if (mask & AE_WRITABLE) ee.events |= EPOLLOUT;
-    //ee.data.fd = fd;
-    //if (epoll_ctl(state->epfd,op,fd,&ee) == -1) return -1;
+    ee.events = 0;
+    mask |= eventLoop->events[fd].mask; /* Merge old events */
+    if (mask & AE_READABLE) ee.events |= EPOLLIN;
+    if (mask & AE_WRITABLE) ee.events |= EPOLLOUT;
+    ee.data.fd = fd;
+    if (epoll_ctl(state->epfd,op,fd,&ee) == -1) return -1;
     return 0;
 }
 
@@ -104,10 +105,7 @@ static void aeApiDelEvent(aeEventLoop *eventLoop, int fd, int delmask) {
     }
 }
 
-/**
 static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
-    int numevents = 0;
-    //fprintf(stderr, "ae_epoll.c/aeApiPoll@@@@@@ NOT Allowed to be called\n");
     aeApiState *state = eventLoop->apidata;
     int retval, numevents = 0;
 
@@ -128,8 +126,9 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
             eventLoop->fired[j].fd = e->data.fd;
             eventLoop->fired[j].mask = mask;
         }
+    }
     return numevents;
-}**/
+}
 
 static char *aeApiName(void) {
     return "epoll";

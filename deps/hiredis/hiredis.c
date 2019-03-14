@@ -39,7 +39,7 @@
 #include <errno.h>
 #include <ctype.h>
 
-#include <zeus/io-queue_c.h>
+#include <dmtr/libos.h>
 
 #include "hiredis.h"
 #include "net.h"
@@ -795,80 +795,58 @@ int redisEnableKeepAlive(redisContext *c) {
  * see if there is a reply available. */
 int redisBufferRead(redisContext *c) {
     char buf[1024*16];
-    int nread, npop, nwait;
+    int nread;
 
-    //fprintf(stderr, "deps/hiredis/hiredis.c/redisBufferRead\n");
     /* Return early when the context has seen an error. */
-    if (c->err){
-        printf("hiredis/redisBufferRead c->err\n");
+    if (c->err)
         return REDIS_ERR;
-    }
 
-    if(HIREDIS_ZEUS_DEBUG) printf("hiredis/redisBufferRead before zeus_pop()\n");
-    // ZEUS
-    if(c->sga_ptr == NULL){
-        fprintf(stderr, "ERROR sga_ptr is NULL\n");
-    }
-    zeus_sgarray sga = *(c->sga_ptr);
-    nread = sga.bufs[0].len;
-    //fprintf(stderr, "deps/hiredis/hiredis.c/redisBufferRead nread:%d\n", nread);
-
-    /**
-    // use zeus_pop
-    npop = zeus_pop(c->fd, &sga);
-    if(npop == 0){
-        // pop success
-        nread = sga.bufs[0].len;
-    }else{
-        nread = -1;
-        nwait = zeus_wait(npop, &sga);
-        nread = sga.bufs[0].len;
-        printf("return value of nwait:%d nread:%d\n", nwait, nread);
-    }**/
-
-    // use zeus_light_pop
-    npop = zeus_peek(c->fd, &sga);
-    if(npop <= 0){
-        // make sure handled as EAGAIN
-        nread = -1;
-        npop = 1;
-    }else{
-        nread = npop;
-        if(nread != sga.bufs[0].len){
-            printf("Error, nread:%d, len:%d\n", nread, sga.bufs[0].len);
-            exit(1);
+    dmtr_qtoken_t qt = 0;
+    if (c->pop_qt != 0) {
+        qt = c->pop_qt;
+    } else {
+        int ret = dmtr_pop(&qt, c->qd);
+        if (0 != ret) {
+            __redisSetError(c,REDIS_ERR_IO,"dmtr_pop() failed");
         }
-        npop = 0;
-    }
-    char *ptr = (char*)(sga.bufs[0].buf);
-    if(nread == C_ZEUS_IO_ERR_NO){
-        // try again later
-        return REDIS_OK;
-    }else if(nread != -1 && nread != 0){
-        if(HIREDIS_ZEUS_DEBUG) printf("will do memcpy nread%d\n", nread);
-        memcpy(buf, ptr, nread);
-        if(HIREDIS_ZEUS_DEBUG) printf("copy to buf:%s\n", buf);
     }
 
-    if (nread == -1) {
-        if ((errno == EAGAIN && !(c->flags & REDIS_BLOCK)) || (errno == EINTR)) {
-            /* Try again later */
-        } else {
+    dmtr_qresult_t qr = {};
+    int ret = -1;
+    if (c->flags & REDIS_BLOCK) {
+        ret = dmtr_wait(&qr, qt);
+    } else {
+        ret = dmtr_poll(&qr, qt);
+    }
+
+    switch (ret) {
+        default:
             __redisSetError(c,REDIS_ERR_IO,NULL);
             return REDIS_ERR;
-        }
-    } else if (nread == 0) {
-        fprintf(stderr, "nread == 0\n");
-        __redisSetError(c,REDIS_ERR_EOF,"Server closed the connection");
-        return REDIS_ERR;
-    } else {
-        if(HIREDIS_ZEUS_DEBUG) printf("will call redisReaderFeed\n");
-        if (redisReaderFeed(c->reader,buf,nread) != REDIS_OK) {
-            __redisSetError(c,c->reader->err,c->reader->errstr);
-            return REDIS_ERR;
-        }
+        case 0:
+            break;
+        case EAGAIN:
+        case EINTR:
+            if (EINTR == ret || !(c->flags & REDIS_BLOCK)) {
+                /* Try again later */
+                c->pop_qt = qt;
+                return REDIS_OK;
+            } else {
+                __redisSetError(c,REDIS_ERR_IO,NULL);
+                return REDIS_ERR;
+            }
     }
-    //printf("return of redisBufferRead\n");
+
+    if (redisReaderFeed(c->reader,qr.qr_value.sga) != REDIS_OK) {
+        __redisSetError(c,c->reader->err,c->reader->errstr);
+        return REDIS_ERR;
+    }
+
+    c->pop_qt = 0;
+    ret = dmtr_drop(qt);
+    if (0 != ret) {
+        __redisSetError(c,REDIS_ERR_IO,"dmtr_drop() failed");
+    }
     return REDIS_OK;
 }
 
@@ -888,29 +866,53 @@ int redisBufferWrite(redisContext *c, int *done) {
     if (c->err)
         return REDIS_ERR;
 
-    fprintf(stderr, "hiredis/redisBufferWrite\n");
+    //fprintf(stderr, "hiredis/redisBufferWrite\n");
+    dmtr_qtoken_t qt = 0;
+    if (c->push_qt != 0) {
+        qt = c->push_qt;
+    } else {
+        dmtr_sgarray_t sga = {};
+        sga.sga_numsegs = 1;
+        sga.sga_segs[0].sgaseg_buf = c->obuf;
+        sga.sga_segs[0].sgaseg_len = sdslen(c->obuf);
+        int ret = dmtr_push(&qt, c->qd, &sga);
+        if (0 != ret) {
+            __redisSetError(c,REDIS_ERR_IO,"dmtr_push() failed");
+        }
+    }
 
-    if (sdslen(c->obuf) > 0) {
-        /* _JL_ NOTE: I cannot remember why did not replace this with zeus_push */
-        // ZEUS
-        nwritten = write(c->fd,c->obuf,sdslen(c->obuf));
-        if (nwritten == -1) {
-            if ((errno == EAGAIN && !(c->flags & REDIS_BLOCK)) || (errno == EINTR)) {
+    dmtr_qresult_t qr = {};
+    int ret = -1;
+    if (c->flags & REDIS_BLOCK) {
+        ret = dmtr_wait(&qr, qt);
+    } else {
+        ret = dmtr_poll(&qr, qt);
+    }
+
+    switch (ret) {
+        default:
+            __redisSetError(c,REDIS_ERR_IO,NULL);
+            return REDIS_ERR;
+        case 0:
+            break;
+        case EAGAIN:
+        case EINTR:
+            if (EINTR == ret || !(c->flags & REDIS_BLOCK)) {
                 /* Try again later */
+                c->push_qt = qt;
+                return REDIS_OK;
             } else {
                 __redisSetError(c,REDIS_ERR_IO,NULL);
                 return REDIS_ERR;
             }
-        } else if (nwritten > 0) {
-            if (nwritten == (signed)sdslen(c->obuf)) {
-                sdsfree(c->obuf);
-                c->obuf = sdsempty();
-            } else {
-                sdsrange(c->obuf,nwritten,-1);
-            }
-        }
     }
-    if (done != NULL) *done = (sdslen(c->obuf) == 0);
+
+    if (done != NULL) *done = 1;
+    c->pop_qt = 0;
+    ret = dmtr_drop(qt);
+    if (0 != ret) {
+        __redisSetError(c,REDIS_ERR_IO,"dmtr_drop() failed");
+    }
     return REDIS_OK;
 }
 

@@ -32,7 +32,6 @@
 #define ANET_H
 
 #include <sys/types.h>
-#include <zeus/io-queue_c.h>
 
 #define ANET_OK 0
 #define ANET_ERR -1

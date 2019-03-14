@@ -42,19 +42,13 @@
 
 #include <sds.h> /* Use hiredis sds. */
 #include "ae.h"
-//#include "server.h"
 #include "hiredis.h"
 #include "adlist.h"
 #include "zmalloc.h"
 
-#include <zeus/io-queue_c.h>
-
-
 #define UNUSED(V) ((void) V)
 #define RANDPTR_INITIAL_SIZE 8
 
-#define _REDIS_BENCH_ZEUS_DEBUG_ 0
-static void showLatencyReport(void);
 static struct config {
     aeEventLoop *el;
     const char *hostip;
@@ -93,7 +87,6 @@ typedef struct _client {
     char **randptr;         /* Pointers to :rand: strings inside the command buf */
     size_t randlen;         /* Number of pointers in client->randptr */
     size_t randfree;        /* Number of unused pointers in client->randptr */
-    size_t written;         /* Bytes of 'obuf' already written */
     long long start;        /* Start time of a request */
     long long latency;      /* Request latency */
     int pending;            /* Number of pending requests (replies to consume) */
@@ -101,17 +94,14 @@ typedef struct _client {
                                such as auth and select are prefixed to the pipeline of
                                benchmark commands and discarded after the first send. */
     int prefixlen;          /* Size in bytes of the pending prefix commands */
-    /* _JL_ pointer to sga_array */
-    zeus_sgarray *sga_ptr;
-} *bench_client;
+} *client;
 
 /* Prototypes */
-static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask);
-static void createMissingClients(bench_client c);
-static void clientDone(bench_client c);
+static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata);
+static void createMissingClients(client c);
 
 /* Implementation */
-static long long bench_ustime(void) {
+static long long ustime(void) {
     struct timeval tv;
     long long ust;
 
@@ -121,7 +111,7 @@ static long long bench_ustime(void) {
     return ust;
 }
 
-static long long bench_mstime(void) {
+static long long mstime(void) {
     struct timeval tv;
     long long mst;
 
@@ -131,100 +121,9 @@ static long long bench_mstime(void) {
     return mst;
 }
 
-void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
-    //UNUSED(el);
-    UNUSED(fd);
-    UNUSED(mask);
-    /* _JL_ This is the actual readhandler, used by ae.c */
-    //fprintf(stderr, "redis-Benchmark.c/readQueryFromClient\n");
-    bench_client c = (bench_client) privdata;
-    c->sga_ptr = el->bench_sga_ptr;
-    c->context->sga_ptr = c->sga_ptr;
-    ///// copied from readHandler
-    void *reply = NULL;
-
-     /* Calculate latency only for the first read event. This means that the
-     * server already sent the reply and we need to parse it. Parsing overhead
-     * is not part of the latency, so calculate it only once, here. */
-    //if (c->latency < 0) c->latency = ustime()-(c->start);
-    long long temp_time = bench_ustime();
-
-    if (redisBufferRead(c->context) != REDIS_OK) {
-        fprintf(stderr,"Error: %s\n",c->context->errstr);
-        exit(1);
-    } else {
-        while(c->pending) {
-            if (redisGetReply(c->context,&reply) != REDIS_OK) {
-                fprintf(stderr,"Error: %s\n",c->context->errstr);
-                exit(1);
-            }
-            if (reply != NULL) {
-                if(c->latency <0){
-                    c->latency = temp_time - (c->start);
-                }
-                if (reply == (void*)REDIS_REPLY_ERROR) {
-                    fprintf(stderr,"Unexpected error reply, exiting...\n");
-                    exit(1);
-                }
-
-                if (config.showerrors) {
-                    static time_t lasterr_time = 0;
-                    time_t now = time(NULL);
-                    redisReply *r = reply;
-                    if (r->type == REDIS_REPLY_ERROR && lasterr_time != now) {
-                        lasterr_time = now;
-                        printf("Error from server: %s\n", r->str);
-                    }
-                }
-
-                freeReplyObject(reply);
-                /* This is an OK for prefix commands such as auth and select.*/
-                if (c->prefix_pending > 0) {
-                    c->prefix_pending--;
-                    c->pending--;
-                    /* Discard prefix commands on first response.*/
-                    if (c->prefixlen > 0) {
-                        size_t j;
-                        sdsrange(c->obuf, c->prefixlen, -1);
-                        /* We also need to fix the pointers to the strings
-                        * we need to randomize. */
-                        for (j = 0; j < c->randlen; j++)
-                            c->randptr[j] -= c->prefixlen;
-                        c->prefixlen = 0;
-                    }
-                    continue;
-                }
-
-                if (config.requests_finished < config.requests)
-                    config.latency[config.requests_finished++] = c->latency;
-                c->pending--;
-                //printf("@@@@@ pending:%d\n", c->pending);
-                if (c->pending == 0) {
-                    clientDone(c);
-                    break;
-                }
-            } else {
-                fprintf(stderr, "@@@ reply is NULL\n");
-                break;
-            }
-        }
-    }
-}
- 
-void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    UNUSED(el);
-    UNUSED(fd);
-    UNUSED(privdata);
-    UNUSED(mask);
-    fprintf(stderr, "ERROR, acceptTcpHandler called in redis-benchmark\n");
-    exit(1);
-}
-
-
-static void freeBenchClient(bench_client c) {
+static void freeClient(client c) {
     listNode *ln;
-    aeDeleteFileEvent(config.el,c->context->fd,AE_WRITABLE);
-    aeDeleteFileEvent(config.el,c->context->fd,AE_READABLE);
+    aeDeleteQueueEvent(config.el,0);
     redisFree(c->context);
     sdsfree(c->obuf);
     zfree(c->randptr);
@@ -240,23 +139,17 @@ static void freeAllClients(void) {
 
     while(ln) {
         next = ln->next;
-        freeBenchClient(ln->value);
+        freeClient(ln->value);
         ln = next;
     }
 }
 
-static void resetBenchClient(bench_client c) {
-    if(_REDIS_BENCH_ZEUS_DEBUG_) printf("redis-Benchmark.c/resetBenchClient\n");
-    aeDeleteFileEvent(config.el,c->context->fd,AE_WRITABLE);
-    aeDeleteFileEvent(config.el,c->context->fd,AE_READABLE);
-    //aeCreateFileEvent(config.el,c->context->fd,AE_WRITABLE,writeHandler,c);
-    c->written = 0;
+static void resetClient(client c) {
+    aeDeleteQueueEvent(config.el,0);
     c->pending = config.pipeline;
-    writeHandler(config.el,c->context->fd, c, AE_WRITABLE);
-    //sleep(10);
 }
 
-static void randomizeClientKey(bench_client c) {
+static void randomizeClientKey(client c) {
     size_t i;
 
     for (i = 0; i < c->randlen; i++) {
@@ -272,41 +165,35 @@ static void randomizeClientKey(bench_client c) {
     }
 }
 
-static void clientDone(bench_client c) {
-    //printf("clientDone finished:%d\n", config.requests_finished);
-    //sleep(10);
+static void clientDone(client c) {
     if (config.requests_finished == config.requests) {
-        config.totlatency = bench_mstime()-config.start;
-        printf("clientDone, finished:%d\n", config.requests);
-        showLatencyReport();
-        freeBenchClient(c);
+        freeClient(c);
         aeStop(config.el);
         return;
     }
     if (config.keepalive) {
-        resetBenchClient(c);
+        resetClient(c);
     } else {
         config.liveclients--;
         createMissingClients(c);
         config.liveclients++;
-        freeBenchClient(c);
+        freeClient(c);
     }
 }
 
-static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    bench_client c = privdata;
+static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+    client c = privdata;
     void *reply = NULL;
-    //UNUSED(el);
+    UNUSED(el);
     UNUSED(fd);
     UNUSED(mask);
-    fprintf(stderr, "ERROR readHandler should not be called\n");
 
-     /* Calculate latency only for the first read event. This means that the
+    /* Calculate latency only for the first read event. This means that the
      * server already sent the reply and we need to parse it. Parsing overhead
      * is not part of the latency, so calculate it only once, here. */
-    //if (c->latency < 0) c->latency = ustime()-(c->start);
-    long long temp_time = bench_ustime();
-    if (redisBufferRead(c->context) != REDIS_OK) {
+    if (c->latency < 0) c->latency = ustime()-(c->start);
+
+    if (redisReaderFeed(c->context->reader,qr.qr_value.sga) != REDIS_OK) {
         fprintf(stderr,"Error: %s\n",c->context->errstr);
         exit(1);
     } else {
@@ -316,9 +203,6 @@ static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                 exit(1);
             }
             if (reply != NULL) {
-                if(c->latency <0){
-                    c->latency = temp_time - (c->start);
-                }
                 if (reply == (void*)REDIS_REPLY_ERROR) {
                     fprintf(stderr,"Unexpected error reply, exiting...\n");
                     exit(1);
@@ -355,82 +239,78 @@ static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                 if (config.requests_finished < config.requests)
                     config.latency[config.requests_finished++] = c->latency;
                 c->pending--;
-                //printf("@@@@@ pending:%d\n", c->pending);
                 if (c->pending == 0) {
                     clientDone(c);
                     break;
                 }
             } else {
-                fprintf(stderr, "@@@ reply is NULL\n");
                 break;
             }
         }
     }
 }
 
-static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    bench_client c = privdata;
+static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+    client c = privdata;
+    int ret;
+
+    if (NULL == qr) {
+        fprintf(stderr, "`qr` should not be `NULL`.\n");
+        abort();
+    }
+
+    if (DMTR_OPC_PUSH != qr->qr_opcode) {
+        fprintf(stderr, "in `writeHandler()`, `qr.qr_opcode` must be `DMTR_OPC_PUSH`.\n");
+        abort();
+    }
+
+    c->written += qr->qr_value.sga.sga_segs[0].sgaseg_len;
+
+    ret = dmtr_pop(&qt, qr.qr_qd);
+    if (ret != 0) {
+        fprintf(stderr, "failed to start a `pop` operation.\n");
+        abort();
+    }
+
+    aeCreateQueueEvent(config.el,qt,readHandler,c);
+}
+
+static void writeRequestBuffer(aeEventLoop *el) {
+    client c = privdata;
     UNUSED(el);
     UNUSED(fd);
     UNUSED(mask);
-
-    if(_REDIS_BENCH_ZEUS_DEBUG_) printf("redis-benchmark.c/writeHandler\n");
 
     /* Initialize request when nothing was written. */
     if (c->written == 0) {
         /* Enforce upper bound to number of requests. */
         if (config.requests_issued++ >= config.requests) {
-            printf("will freeClient issued>=request\n");
-            //freeClient(c);
+            freeClient(c);
             return;
         }
 
         /* Really initialize: randomize keys and set start time. */
         if (config.randomkeys) randomizeClientKey(c);
-        c->start = bench_ustime();
+        c->start = ustime();
         c->latency = -1;
     }
-    if(_REDIS_BENCH_ZEUS_DEBUG_) printf("check c->obuf:%d c->written:%d\n", sdslen(c->obuf), c->written);
+
     if (sdslen(c->obuf) > c->written) {
-        void *ptr = c->obuf+c->written;
-        // ZEUS
-        //printf("@@@@@@writeHandler/write()\n");
-        //ssize_t nwritten = write(c->context->fd,ptr,sdslen(c->obuf)-c->written);
-        zeus_sgarray sga;
-        sga.num_bufs = 1;
-        sga.bufs[0].buf = (zeus_ioptr)ptr;
-        sga.bufs[0].len = sdslen(c->obuf)-c->written;
-        ssize_t nwritten, npush;
-        npush = zeus_push(c->context->fd, &sga);
-        if(_REDIS_BENCH_ZEUS_DEBUG_) printf("return value of zeus_push() %zd\n", npush);
-        if(npush == 0){
-            // push success
-            nwritten = sga.bufs[0].len;
-            if(_REDIS_BENCH_ZEUS_DEBUG_) printf("nwritten set to:%d\n", nwritten);
-        }else if(npush > 0){
-            // zeus_push returns qtoken
-            nwritten = -1;
-            errno = EAGAIN;
-            fprintf(stderr, "_JL_@@@ redis-benchmark.c/writeHandler PUSH return qtoken will wait\n");
-            zeus_sgarray tmp_sga;
-            zeus_wait(npush, &tmp_sga);
-            //sleep(100);
-        }else{
-            nwritten = -1;
-            errno = EAGAIN;
+        dmtr_sgarray_t sga;
+        dmtr_qtoken_t qt;
+        int ret;
+
+        memset(&sga, 0, sizeof(sga));
+        sga.sga_numsegs = 1;
+        sga.sga_segs[0].sgaseg_buf = c->obuf+c->written;
+        sga.sga_segs[0].sgaseg_len = sdslen(c->obuf)-c->written;
+        ret = dmtr_push(&qt, c->context->fd, &sga);
+        if (ret != 0) {
+            fprintf(stderr, "failed to push");
+            abort();
         }
-        if (nwritten == -1) {
-            if (errno != EPIPE)
-                fprintf(stderr, "Writing to socket: %s\n", strerror(errno));
-            freeBenchClient(c);
-            return;
-        }
-        c->written += nwritten;
-        if (sdslen(c->obuf) == c->written) {
-            /* _JL_ */
-            //aeDeleteFileEvent(config.el,c->context->fd,AE_WRITABLE);
-            //aeCreateFileEvent(config.el,c->context->fd,AE_READABLE,readHandler,c);
-        }
+
+        aeCreateQueueEvent(config.el,qt,writeHandler);
     }
 }
 
@@ -455,10 +335,9 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
  *    for arguments randomization.
  *
  * Even when cloning another client, prefix commands are applied if needed.*/
-static bench_client createBenchClient(char *cmd, size_t len, bench_client from) {
+static client createClient(char *cmd, size_t len, client from) {
     int j;
-    bench_client c = zmalloc(sizeof(struct _client));
-    //fprintf(stderr, "redis-benchmar.c@@@@@@createBencBenchClient\n");
+    client c = zmalloc(sizeof(struct _client));
 
     if (config.hostsocket == NULL) {
         c->context = redisConnectNonBlock(config.hostip,config.hostport);
@@ -546,24 +425,18 @@ static bench_client createBenchClient(char *cmd, size_t len, bench_client from) 
             }
         }
     }
-    if (config.idlemode == 0) {
-        //aeCreateFileEvent(config.el,c->context->fd,AE_WRITABLE,writeHandler,c);
-        /* _JL_ */
-        add_queue_status_item(config.el, c->context->fd, LIBOS_Q_STATUS_read_nopop);
-        struct qd_status *ret_qd_status = find_queue_status_item(config.el, c->context->fd);
-        (ret_qd_status->status_token_arr[2]) = c;
-        writeHandler(config.el,c->context->fd, c, AE_WRITABLE);
-    }
+    if (config.idlemode == 0)
+        writeRequestBuffer(config.el);
     listAddNodeTail(config.clients,c);
     config.liveclients++;
     return c;
 }
 
-static void createMissingClients(bench_client c) {
+static void createMissingClients(client c) {
     int n = 0;
 
     while(config.liveclients < config.numclients) {
-        createBenchClient(NULL,0,c);
+        createClient(NULL,0,c);
 
         /* Listen backlog is quite limited on most systems */
         if (++n > 64) {
@@ -591,15 +464,13 @@ static void showLatencyReport(void) {
         printf("  keep alive: %d\n", config.keepalive);
         printf("\n");
 
-        //qsort(config.latency,config.requests,sizeof(long long),compareLatency);
+        qsort(config.latency,config.requests,sizeof(long long),compareLatency);
         for (i = 0; i < config.requests; i++) {
-            printf("i:%d  latency:%ld\n",i, config.latency[i]);
-            /**
             if (config.latency[i]/1000 != curlat || i == (config.requests-1)) {
                 curlat = config.latency[i]/1000;
                 perc = ((float)(i+1)*100)/config.requests;
                 printf("%.2f%% <= %d milliseconds\n", perc, curlat);
-            }**/
+            }
         }
         printf("%.2f requests per second\n\n", reqpersec);
     } else if (config.csv) {
@@ -610,20 +481,20 @@ static void showLatencyReport(void) {
 }
 
 static void benchmark(char *title, char *cmd, int len) {
-    bench_client c;
+    client c;
 
     config.title = title;
     config.requests_issued = 0;
     config.requests_finished = 0;
 
-    c = createBenchClient(cmd,len,NULL);
+    c = createClient(cmd,len,NULL);
     createMissingClients(c);
-    printf("redis-benchmark.c will count time\n");
-    config.start = bench_mstime();
-    aeMain(config.el);
-    config.totlatency = bench_mstime()-config.start;
 
-    // showLatencyReport();
+    config.start = mstime();
+    aeMain(config.el);
+    config.totlatency = mstime()-config.start;
+
+    showLatencyReport();
     freeAllClients();
 }
 
@@ -775,7 +646,7 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
         fflush(stdout);
 	return 250;
     }
-    float dt = (float)(bench_mstime()-config.start)/1000.0;
+    float dt = (float)(mstime()-config.start)/1000.0;
     float rps = (float)config.requests_finished/dt;
     printf("%s: %.2f\r", config.title, rps);
     fflush(stdout);
@@ -801,7 +672,7 @@ int main(int argc, const char **argv) {
     char *data, *cmd;
     int len;
 
-    bench_client c;
+    client c;
 
     srandom(time(NULL));
     signal(SIGHUP, SIG_IGN);
@@ -843,7 +714,7 @@ int main(int argc, const char **argv) {
 
     if (config.idlemode) {
         printf("Creating %d idle connections and waiting forever (Ctrl+C when done)\n", config.numclients);
-        c = createBenchClient("",0,NULL); /* will never receive a reply */
+        c = createClient("",0,NULL); /* will never receive a reply */
         createMissingClients(c);
         aeMain(config.el);
         /* and will wait for every */

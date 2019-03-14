@@ -34,15 +34,12 @@
 #ifndef __HIREDIS_H
 #define __HIREDIS_H
 
-
-#include <zeus/io-queue_c.h>
+#include <dmtr/types.h>
 #include "read.h"
 #include <stdarg.h> /* for va_list */
 #include <sys/time.h> /* for struct timeval */
 #include <stdint.h> /* uintXX_t, etc */
 #include "sds.h" /* for sds */
-
-#define HIREDIS_ZEUS_DEBUG 0
 
 #define HIREDIS_MAJOR 0
 #define HIREDIS_MINOR 13
@@ -145,11 +142,12 @@ enum redisConnectionType {
 typedef struct redisContext {
     int err; /* Error flags, 0 when there is no error */
     char errstr[128]; /* String representation of error when applicable */
-    int fd;
+    int qd;
     int flags;
     char *obuf; /* Write buffer */
     redisReader *reader; /* Protocol reader */
-    zeus_sgarray *sga_ptr;
+    dmtr_qtoken_t push_qt;
+    dmtr_qtoken_t pop_qt;
 
     enum redisConnectionType connection_type;
     struct timeval *timeout;

@@ -51,10 +51,12 @@
 #include <limits.h>
 #include <stdlib.h>
 
-#include <zeus/io-queue_c.h>
-
 #include "net.h"
 #include "sds.h"
+
+#include <dmtr/libos.h>
+
+#define UNUSED(V) ((void) V)
 
 /* Defined in hiredis.c */
 void __redisSetError(redisContext *c, int type, const char *str);
@@ -88,12 +90,11 @@ static int redisSetReuseAddr(redisContext *c) {
 
 static int redisCreateSocket(redisContext *c, int type) {
     int s;
-    //if ((s = socket(type, SOCK_STREAM, 0)) == -1) {
-    if ((s = zeus_socket(type, SOCK_STREAM, 0)) == -1) {
+    if (dmtr_socket(&s, type, SOCK_STREAM, 0) != 0) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
         return REDIS_ERR;
     }
-    c->fd = s;
+    c->qd = s;
     if (type == AF_INET) {
         if (redisSetReuseAddr(c) == REDIS_ERR) {
             return REDIS_ERR;
@@ -103,10 +104,8 @@ static int redisCreateSocket(redisContext *c, int type) {
 }
 
 static int redisSetBlocking(redisContext *c, int blocking) {
-    int flags;
-
-    //fprintf(stderr, "hiredis/net.c/redisSetBlocking fd:%d real_fd:%d blocking:%d\n", c->fd, zeus_qd2fd(c->fd), blocking);
 #if 0
+    int flags;
 
     /* Set the socket nonblocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
@@ -127,14 +126,17 @@ static int redisSetBlocking(redisContext *c, int blocking) {
         redisContextCloseFd(c);
         return REDIS_ERR;
     }
+#else
+    UNUSED(c);
+    UNUSED(blocking)
 #endif
     return REDIS_OK;
 }
 
 int redisKeepAlive(redisContext *c, int interval) {
+#if 0
     int val = 1;
     int fd = c->fd;
-#if 0
 
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1){
         __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
@@ -170,20 +172,26 @@ int redisKeepAlive(redisContext *c, int interval) {
     }
 #endif
 #endif
-#endif 
+#else
+    UNUSED(c);
+    UNUSED(interval);
+#endif
 
     return REDIS_OK;
 }
 
 static int redisSetTcpNoDelay(redisContext *c) {
-    int yes = 1;
 #if 0
+    int yes = 1;
     if (setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(TCP_NODELAY)");
         redisContextCloseFd(c);
         return REDIS_ERR;
     }
+#else
+    UNUSED(c);
 #endif
+
     return REDIS_OK;
 }
 
@@ -283,8 +291,8 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     int reuseaddr = (c->flags & REDIS_REUSEADDR);
     int reuses = 0;
     long timeout_msec = -1;
+    int ret;
 
-    //printf("_JL_ _redisContextConnectTcp\n");
     servinfo = NULL;
     c->connection_type = REDIS_CONN_TCP;
     c->tcp.port = port;
@@ -348,8 +356,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     }
     for (p = servinfo; p != NULL; p = p->ai_next) {
 addrretry:
-        //if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
-        if ((s = zeus_socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
+        if (dmtr_socket(&s, p->ai_family,p->ai_socktype,p->ai_protocol) != 0)
             continue;
 
         c->fd = s;
@@ -365,6 +372,8 @@ addrretry:
                 goto error;
             }
 
+#if 0
+            // demeter: not supported.
             if (reuseaddr) {
                 n = 1;
                 if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &n,
@@ -372,9 +381,10 @@ addrretry:
                     goto error;
                 }
             }
+#endif
 
             for (b = bservinfo; b != NULL; b = b->ai_next) {
-                if (zeus_bind(s,b->ai_addr,b->ai_addrlen) != -1) {
+                if (dmtr_bind(sd,b->ai_addr,b->ai_addrlen) == 0) {
                     bound = 1;
                     break;
                 }
@@ -387,14 +397,14 @@ addrretry:
                 goto error;
             }
         }
-        //if (connect(s,p->ai_addr,p->ai_addrlen) == -1) {
-        if (zeus_connect(s,p->ai_addr,p->ai_addrlen) == -1) {
-            if (errno == EHOSTUNREACH) {
+        ret = dmtr_connect(s,p->ai_addr,p->ai_addrlen);
+        if (ret != 0) {
+            if (ret == EHOSTUNREACH) {
                 redisContextCloseFd(c);
                 continue;
-            } else if (errno == EINPROGRESS && !blocking) {
+            } else if (ret == EINPROGRESS && !blocking) {
                 /* This is ok. */
-            } else if (errno == EADDRNOTAVAIL && reuseaddr) {
+            } else if (ret == EADDRNOTAVAIL && reuseaddr) {
                 if (++reuses >= REDIS_CONNECT_RETRIES) {
                     goto error;
                 } else {
@@ -426,13 +436,11 @@ error:
     rv = REDIS_ERR;
 end:
     freeaddrinfo(servinfo);
-    //printf("_JL_ _redisContextConnectTcp return\n");
     return rv;  // Need to return REDIS_OK if alright
 }
 
 int redisContextConnectTcp(redisContext *c, const char *addr, int port,
                            const struct timeval *timeout) {
-    //printf("hiredis/redisContextConnectTcp\n");
     return _redisContextConnectTcp(c, addr, port, timeout, NULL);
 }
 
@@ -446,6 +454,7 @@ int redisContextConnectUnix(redisContext *c, const char *path, const struct time
     int blocking = (c->flags & REDIS_BLOCK);
     struct sockaddr_un sa;
     long timeout_msec = -1;
+    int ret;
 
     if (redisCreateSocket(c,AF_LOCAL) < 0)
         return REDIS_ERR;
@@ -474,9 +483,9 @@ int redisContextConnectUnix(redisContext *c, const char *path, const struct time
 
     sa.sun_family = AF_LOCAL;
     strncpy(sa.sun_path,path,sizeof(sa.sun_path)-1);
-    //if (connect(c->fd, (struct sockaddr*)&sa, sizeof(sa)) == -1) {
-    if (zeus_connect(c->fd, (struct sockaddr*)&sa, sizeof(sa)) == -1) {
-        if (errno == EINPROGRESS && !blocking) {
+    ret = dmtr_connect(c->qd,  (struct sockaddr*)&sa, sizeof(sa));
+    if (0 != ret) {
+        if (ret == EINPROGRESS && !blocking) {
             /* This is ok. */
         } else {
             if (redisContextWaitReady(c,timeout_msec) != REDIS_OK)
