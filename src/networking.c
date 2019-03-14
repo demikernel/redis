@@ -33,6 +33,9 @@
 #include <math.h>
 #include <ctype.h>
 
+#include <dmtr/libos.h>
+#include <dmtr/wait.h>
+
 static void setProtocolError(const char *errstr, client *c, long pos);
 
 /* Return the size consumed from the allocator, for the specified SDS string,
@@ -82,7 +85,7 @@ client *createClient(int fd) {
         anetEnableTcpNoDelay(NULL,fd);
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
-        ret = dmtr_pop(&qt, qd);
+        ret = dmtr_pop(&qt, fd);
         if (0 != ret ||
             aeCreateQueueEvent(server.el,qt,
             readQueryFromClient, c) == AE_ERR)
@@ -984,15 +987,11 @@ int writeToClient(int fd, client *c, int handler_installed) {
             !(c->flags & CLIENT_SLAVE)) break;
     }
     server.stat_net_output_bytes += totwritten;
-    if (ret != 0) {
-        if (ret == EAGAIN) {
-            nwritten = 0;
-        } else {
-            serverLog(LL_VERBOSE,
-                "Error writing to client: %s", strerror(errno));
-            freeClient(c);
-            return C_ERR;
-        }
+    if (ret != 0 && ret != EAGAIN) {
+        serverLog(LL_VERBOSE,
+            "Error writing to client: %s", strerror(ret));
+        freeClient(c);
+        return C_ERR;
     }
     if (totwritten > 0) {
         /* For clients representing masters we don't count sending data
@@ -1012,13 +1011,6 @@ int writeToClient(int fd, client *c, int handler_installed) {
         }
     }
     return C_OK;
-}
-
-/* Write event handler. Just send data to the client. */
-void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
-    UNUSED(el);
-    UNUSED(mask);
-    writeToClient(fd,privdata,1);
 }
 
 /* This function is called just before entering the event loop, in the hope
@@ -1053,8 +1045,8 @@ int handleClientsWithPendingWrites(void) {
             {
                 ae_flags |= AE_BARRIER;
             }
-            if (aeCreateFileEvent(server.el, c->fd, ae_flags,
-                sendReplyToClient, c) == AE_ERR)
+
+            if (writeToClient(c->fd,c,0) == C_ERR)
             {
                     freeClientAsync(c);
             }
@@ -1406,7 +1398,6 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     int nread, readlen;
     size_t qblen;
     const dmtr_sgarray_t *sga = NULL;
-    size_t nread;
     UNUSED(el);
 
     if (NULL == qr) {
@@ -1414,7 +1405,7 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
         abort();
     }
 
-    if (qr.qr_opcode != DMTR_OPC_POP) {
+    if (qr->qr_opcode != DMTR_OPC_POP) {
         fprintf(stderr, "`qr` must be the result of a `pop` operation.\n");
         abort();
     }

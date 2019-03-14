@@ -62,9 +62,9 @@
 void __redisSetError(redisContext *c, int type, const char *str);
 
 static void redisContextCloseFd(redisContext *c) {
-    if (c && c->fd >= 0) {
-        close(c->fd);
-        c->fd = -1;
+    if (c && c->qd >= 0) {
+        dmtr_close(c->qd);
+        c->qd = -1;
     }
 }
 
@@ -79,12 +79,17 @@ static void __redisSetErrorFromErrno(redisContext *c, int type, const char *pref
 }
 
 static int redisSetReuseAddr(redisContext *c) {
+#if 0
     int on = 1;
     if (setsockopt(c->fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
         redisContextCloseFd(c);
         return REDIS_ERR;
     }
+#else
+    UNUSED(c);
+#endif
+
     return REDIS_OK;
 }
 
@@ -128,8 +133,9 @@ static int redisSetBlocking(redisContext *c, int blocking) {
     }
 #else
     UNUSED(c);
-    UNUSED(blocking)
+    UNUSED(blocking);
 #endif
+
     return REDIS_OK;
 }
 
@@ -223,7 +229,7 @@ static int redisContextTimeoutMsec(redisContext *c, long *result)
 static int redisContextWaitReady(redisContext *c, long msec) {
     struct pollfd   wfd[1];
 
-    wfd[0].fd     = c->fd;
+    wfd[0].fd     = c->qd;
     wfd[0].events = POLLOUT;
 
     if (errno == EINPROGRESS) {
@@ -252,6 +258,7 @@ static int redisContextWaitReady(redisContext *c, long msec) {
 }
 
 int redisCheckSocketError(redisContext *c) {
+#if 0
     int err = 0;
     socklen_t errlen = sizeof(err);
 
@@ -265,11 +272,15 @@ int redisCheckSocketError(redisContext *c) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
         return REDIS_ERR;
     }
+#else
+    UNUSED(c);
+#endif
 
     return REDIS_OK;
 }
 
 int redisContextSetTimeout(redisContext *c, const struct timeval tv) {
+#if 0
     if (setsockopt(c->fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv)) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(SO_RCVTIMEO)");
         return REDIS_ERR;
@@ -278,13 +289,18 @@ int redisContextSetTimeout(redisContext *c, const struct timeval tv) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(SO_SNDTIMEO)");
         return REDIS_ERR;
     }
+#else
+    UNUSED(c);
+    UNUSED(tv);
+#endif
+
     return REDIS_OK;
 }
 
 static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
                                    const struct timeval *timeout,
                                    const char *source_addr) {
-    int s, rv, n;
+    int s, rv;
     char _port[6];  /* strlen("65535"); */
     struct addrinfo hints, *servinfo, *bservinfo, *p, *b;
     int blocking = (c->flags & REDIS_BLOCK);
@@ -359,7 +375,7 @@ addrretry:
         if (dmtr_socket(&s, p->ai_family,p->ai_socktype,p->ai_protocol) != 0)
             continue;
 
-        c->fd = s;
+        c->qd = s;
         if (redisSetBlocking(c,0) != REDIS_OK)
             goto error;
         if (c->tcp.source_addr) {
@@ -384,7 +400,7 @@ addrretry:
 #endif
 
             for (b = bservinfo; b != NULL; b = b->ai_next) {
-                if (dmtr_bind(sd,b->ai_addr,b->ai_addrlen) == 0) {
+                if (dmtr_bind(s,b->ai_addr,b->ai_addrlen) == 0) {
                     bound = 1;
                     break;
                 }
