@@ -39,11 +39,12 @@
 #include <errno.h>
 #include <ctype.h>
 
-#include <dmtr/libos.h>
-
 #include "hiredis.h"
 #include "net.h"
 #include "sds.h"
+
+#include <dmtr/libos.h>
+#include <dmtr/wait.h>
 
 static redisReply *createReplyObject(int type);
 static void *createStringObject(const redisReadTask *task, char *str, size_t len);
@@ -618,8 +619,8 @@ static redisContext *redisContextInit(void) {
 void redisFree(redisContext *c) {
     if (c == NULL)
         return;
-    if (c->fd > 0)
-        close(c->fd);
+    if (c->qd > 0)
+        dmtr_close(c->qd);
     if (c->obuf != NULL)
         sdsfree(c->obuf);
     if (c->reader != NULL)
@@ -635,19 +636,19 @@ void redisFree(redisContext *c) {
     free(c);
 }
 
-int redisFreeKeepFd(redisContext *c) {
-    int fd = c->fd;
-    c->fd = -1;
+int redisFreeKeepQd(redisContext *c) {
+    int qd = c->qd;
+    c->qd = -1;
     redisFree(c);
-    return fd;
+    return qd;
 }
 
 int redisReconnect(redisContext *c) {
     c->err = 0;
     memset(c->errstr, '\0', strlen(c->errstr));
 
-    if (c->fd > 0) {
-        close(c->fd);
+    if (c->qd > 0) {
+        dmtr_close(c->qd);
     }
 
     sdsfree(c->obuf);
@@ -762,14 +763,14 @@ redisContext *redisConnectUnixNonBlock(const char *path) {
     return c;
 }
 
-redisContext *redisConnectFd(int fd) {
+redisContext *redisConnectQd(int qd) {
     redisContext *c;
 
     c = redisContextInit();
     if (c == NULL)
         return NULL;
 
-    c->fd = fd;
+    c->qd = qd;
     c->flags |= REDIS_BLOCK | REDIS_CONNECTED;
     return c;
 }
@@ -794,59 +795,55 @@ int redisEnableKeepAlive(redisContext *c) {
  * After this function is called, you may use redisContextReadReply to
  * see if there is a reply available. */
 int redisBufferRead(redisContext *c) {
-    char buf[1024*16];
-    int nread;
+    dmtr_qtoken_t qt = 0;
+    int ret;
+    dmtr_qresult_t qr;
 
     /* Return early when the context has seen an error. */
     if (c->err)
         return REDIS_ERR;
 
-    dmtr_qtoken_t qt = 0;
     if (c->pop_qt != 0) {
         qt = c->pop_qt;
     } else {
-        int ret = dmtr_pop(&qt, c->qd);
+        ret = dmtr_pop(&qt, c->qd);
         if (0 != ret) {
             __redisSetError(c,REDIS_ERR_IO,"dmtr_pop() failed");
         }
     }
 
-    dmtr_qresult_t qr = {};
-    int ret = -1;
+    memset(&qr, 0, sizeof(qr));
     if (c->flags & REDIS_BLOCK) {
         ret = dmtr_wait(&qr, qt);
-    } else {
-        ret = dmtr_poll(&qr, qt);
-    }
-
-    switch (ret) {
-        default:
+        if (0 != ret) {
             __redisSetError(c,REDIS_ERR_IO,NULL);
             return REDIS_ERR;
-        case 0:
-            break;
-        case EAGAIN:
-        case EINTR:
-            if (EINTR == ret || !(c->flags & REDIS_BLOCK)) {
-                /* Try again later */
-                c->pop_qt = qt;
-                return REDIS_OK;
-            } else {
-                __redisSetError(c,REDIS_ERR_IO,NULL);
-                return REDIS_ERR;
-            }
+        }
+    } else {
+        ret = dmtr_poll(&qr, qt);
+        if (EAGAIN == ret || EINTR == ret) {
+            /* Try again later */
+            c->pop_qt = qt;
+            return REDIS_OK;
+        }
+
+        if (0 != ret) {
+            __redisSetError(c,REDIS_ERR_IO,NULL);
+            return REDIS_ERR;
+        }
+
+        ret = dmtr_drop(qt);
+        if (0 != ret) {
+            __redisSetError(c,REDIS_ERR_IO,"dmtr_drop() failed");
+        }
     }
 
-    if (redisReaderFeed(c->reader,qr.qr_value.sga) != REDIS_OK) {
+    if (redisReaderFeed(c->reader,&qr.qr_value.sga) != REDIS_OK) {
         __redisSetError(c,c->reader->err,c->reader->errstr);
         return REDIS_ERR;
     }
 
     c->pop_qt = 0;
-    ret = dmtr_drop(qt);
-    if (0 != ret) {
-        __redisSetError(c,REDIS_ERR_IO,"dmtr_drop() failed");
-    }
     return REDIS_OK;
 }
 
@@ -860,59 +857,58 @@ int redisBufferRead(redisContext *c) {
  * c->errstr to hold the appropriate error string.
  */
 int redisBufferWrite(redisContext *c, int *done) {
-    int nwritten;
+    dmtr_qtoken_t qt = 0;
+    int ret;
+    dmtr_qresult_t qr;
 
     /* Return early when the context has seen an error. */
     if (c->err)
         return REDIS_ERR;
 
-    //fprintf(stderr, "hiredis/redisBufferWrite\n");
-    dmtr_qtoken_t qt = 0;
     if (c->push_qt != 0) {
         qt = c->push_qt;
     } else {
-        dmtr_sgarray_t sga = {};
+        dmtr_sgarray_t sga;
+
+        memset(&sga, 0, sizeof(sga));
         sga.sga_numsegs = 1;
         sga.sga_segs[0].sgaseg_buf = c->obuf;
         sga.sga_segs[0].sgaseg_len = sdslen(c->obuf);
-        int ret = dmtr_push(&qt, c->qd, &sga);
+        ret = dmtr_push(&qt, c->qd, &sga);
         if (0 != ret) {
             __redisSetError(c,REDIS_ERR_IO,"dmtr_push() failed");
         }
     }
 
-    dmtr_qresult_t qr = {};
-    int ret = -1;
+    memset(&qr, 0, sizeof(qr));
+    ret = -1;
     if (c->flags & REDIS_BLOCK) {
         ret = dmtr_wait(&qr, qt);
-    } else {
-        ret = dmtr_poll(&qr, qt);
-    }
-
-    switch (ret) {
-        default:
+        if (0 != ret) {
             __redisSetError(c,REDIS_ERR_IO,NULL);
             return REDIS_ERR;
-        case 0:
-            break;
-        case EAGAIN:
-        case EINTR:
-            if (EINTR == ret || !(c->flags & REDIS_BLOCK)) {
-                /* Try again later */
-                c->push_qt = qt;
-                return REDIS_OK;
-            } else {
-                __redisSetError(c,REDIS_ERR_IO,NULL);
-                return REDIS_ERR;
-            }
+        }
+    } else {
+        ret = dmtr_poll(&qr, qt);
+        if (EAGAIN == ret || EINTR == ret) {
+            /* Try again later */
+            c->pop_qt = qt;
+            return REDIS_OK;
+        }
+
+        if (0 != ret) {
+            __redisSetError(c,REDIS_ERR_IO,NULL);
+            return REDIS_ERR;
+        }
+
+        ret = dmtr_drop(qt);
+        if (0 != ret) {
+            __redisSetError(c,REDIS_ERR_IO,"dmtr_drop() failed");
+        }
     }
 
     if (done != NULL) *done = 1;
     c->pop_qt = 0;
-    ret = dmtr_drop(qt);
-    if (0 != ret) {
-        __redisSetError(c,REDIS_ERR_IO,"dmtr_drop() failed");
-    }
     return REDIS_OK;
 }
 

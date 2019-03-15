@@ -46,6 +46,8 @@
 #include "adlist.h"
 #include "zmalloc.h"
 
+#include <dmtr/libos.h>
+
 #define UNUSED(V) ((void) V)
 #define RANDPTR_INITIAL_SIZE 8
 
@@ -87,6 +89,7 @@ typedef struct _client {
     char **randptr;         /* Pointers to :rand: strings inside the command buf */
     size_t randlen;         /* Number of pointers in client->randptr */
     size_t randfree;        /* Number of unused pointers in client->randptr */
+    size_t written;         /* Bytes of 'obuf' already written */
     long long start;        /* Start time of a request */
     long long latency;      /* Request latency */
     int pending;            /* Number of pending requests (replies to consume) */
@@ -185,15 +188,18 @@ static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdat
     client c = privdata;
     void *reply = NULL;
     UNUSED(el);
-    UNUSED(fd);
-    UNUSED(mask);
+
+    if (NULL == qr) {
+        fprintf(stderr, "`qr` is `NULL`\n");
+        abort();
+    }
 
     /* Calculate latency only for the first read event. This means that the
      * server already sent the reply and we need to parse it. Parsing overhead
      * is not part of the latency, so calculate it only once, here. */
     if (c->latency < 0) c->latency = ustime()-(c->start);
 
-    if (redisReaderFeed(c->context->reader,qr.qr_value.sga) != REDIS_OK) {
+    if (redisReaderFeed(c->context->reader,&qr->qr_value.sga) != REDIS_OK) {
         fprintf(stderr,"Error: %s\n",c->context->errstr);
         exit(1);
     } else {
@@ -251,8 +257,10 @@ static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdat
 }
 
 static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+    UNUSED(el);
     client c = privdata;
     int ret;
+    dmtr_qtoken_t qt;
 
     if (NULL == qr) {
         fprintf(stderr, "`qr` should not be `NULL`.\n");
@@ -266,7 +274,7 @@ static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
 
     c->written += qr->qr_value.sga.sga_segs[0].sgaseg_len;
 
-    ret = dmtr_pop(&qt, qr.qr_qd);
+    ret = dmtr_pop(&qt, qr->qr_qd);
     if (ret != 0) {
         fprintf(stderr, "failed to start a `pop` operation.\n");
         abort();
@@ -275,11 +283,11 @@ static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     aeCreateQueueEvent(config.el,qt,readHandler,c);
 }
 
-static void writeRequestBuffer(aeEventLoop *el) {
-    client c = privdata;
-    UNUSED(el);
-    UNUSED(fd);
-    UNUSED(mask);
+static void writeRequestBuffer(client c) {
+    if (NULL == c) {
+        fprintf(stderr, "`c` is `NULL`\n");
+        abort();
+    }
 
     /* Initialize request when nothing was written. */
     if (c->written == 0) {
@@ -304,13 +312,13 @@ static void writeRequestBuffer(aeEventLoop *el) {
         sga.sga_numsegs = 1;
         sga.sga_segs[0].sgaseg_buf = c->obuf+c->written;
         sga.sga_segs[0].sgaseg_len = sdslen(c->obuf)-c->written;
-        ret = dmtr_push(&qt, c->context->fd, &sga);
+        ret = dmtr_push(&qt, c->context->qd, &sga);
         if (ret != 0) {
             fprintf(stderr, "failed to push");
             abort();
         }
 
-        aeCreateQueueEvent(config.el,qt,writeHandler);
+        aeCreateQueueEvent(config.el,qt,writeHandler,c);
     }
 }
 
@@ -426,7 +434,7 @@ static client createClient(char *cmd, size_t len, client from) {
         }
     }
     if (config.idlemode == 0)
-        writeRequestBuffer(config.el);
+        writeRequestBuffer(c);
     listAddNodeTail(config.clients,c);
     config.liveclients++;
     return c;

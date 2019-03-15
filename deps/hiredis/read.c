@@ -467,7 +467,7 @@ int redisReaderFeed(redisReader *r, const dmtr_sgarray_t *sga) {
         for (size_t i = 0; i < sga->sga_numsegs; ++i) {
             const char *buf = (const char *)sga->sga_segs[i].sgaseg_buf;
             size_t len = sga->sga_segs[i].sgaseg_len;
-            newbuf = sdscatlen(newbuf,buf,len)
+            newbuf = sdscatlen(newbuf,buf,len);
             if (newbuf == NULL) {
                 __redisReaderSetErrorOOM(r);
                 return REDIS_ERR;
