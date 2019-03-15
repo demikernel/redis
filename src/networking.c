@@ -32,6 +32,7 @@
 #include <sys/uio.h>
 #include <math.h>
 #include <ctype.h>
+#include <arpa/inet.h>
 
 #include <dmtr/libos.h>
 #include <dmtr/wait.h>
@@ -79,7 +80,7 @@ client *createClient(int fd) {
      * contexts (for instance a Lua script) we need a non connected client. */
     if (fd != -1) {
         int ret;
-        dmtr_qtoken_t qt;
+        dmtr_qtoken_t qt = 0;
 
         anetNonBlock(NULL,fd);
         anetEnableTcpNoDelay(NULL,fd);
@@ -686,24 +687,40 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     c->flags |= flags;
 }
 
-void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
+void acceptTcpHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+    int cport, ret;
     char cip[NET_IP_STR_LEN];
-    UNUSED(el);
-    UNUSED(mask);
+    dmtr_qtoken_t qt = 0;
+    const struct sockaddr_in *s =NULL;
     UNUSED(privdata);
 
-    while(max--) {
-        cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
-        if (cfd == ANET_ERR) {
-            if (errno != EWOULDBLOCK)
-                serverLog(LL_WARNING,
-                    "Accepting client connection: %s", server.neterr);
-            return;
-        }
-        serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
-        acceptCommonHandler(cfd,0,cip);
+    if (NULL == qr) {
+        fprintf(stderr, "acceptTcpHandler(): `qr` cannot be `NULL`\n");
+        abort();
     }
+
+    fprintf(stderr, "Accepted connection on qd 0x%08x.\n", qr->qr_qd);
+
+    ret = dmtr_accept(&qt, qr->qr_qd);
+    if (0 != ret) {
+        fprintf(stderr, "acceptTcpHandler(): failed to start next accept() operation.\n");
+        abort();
+    }
+
+    if (aeCreateQueueEvent(el, qt,
+        acceptTcpHandler,NULL) == AE_ERR)
+    {
+        fprintf(stderr, "acceptTcpHandler(): failed to create queue event.\n");
+        abort();
+    }
+
+    // copied from `anetTcpAccept()`.
+    s = &qr->qr_value.ares.addr;
+    inet_ntop(AF_INET,(void*)&(s->sin_addr),cip,sizeof(cip));
+    cport = ntohs(s->sin_port);
+
+    fprintf(stderr, "Accepted connection from %s:%d.\n", cip, cport);
+    acceptCommonHandler(qr->qr_value.ares.qd, 0, cip);
 }
 
 void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
@@ -1409,6 +1426,8 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
         fprintf(stderr, "`qr` must be the result of a `pop` operation.\n");
         abort();
     }
+
+    fprintf(stderr, "readQueryFromClient(): completing qt 0x%016lx, opcode %d.\n", qr->qr_qt, qr->qr_opcode);
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply

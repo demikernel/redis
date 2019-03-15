@@ -49,6 +49,8 @@
 #include <lua.h>
 #include <signal.h>
 
+#include <dmtr/types.h>
+
 typedef long long mstime_t; /* millisecond time type. */
 
 #include "ae.h"      /* Event driven programming library */
@@ -1349,7 +1351,7 @@ void *addDeferredMultiBulkLength(client *c);
 void setDeferredMultiBulkLength(client *c, void *node, long length);
 void processInputBuffer(client *c);
 void acceptHandler(aeEventLoop *el, int fd, void *privdata, int mask);
-void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+void acceptTcpHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata);
 void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata);
 void addReplyString(client *c, const char *s, size_t len);

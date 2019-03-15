@@ -1357,7 +1357,7 @@ void evalGenericCommand(client *c, int evalsha) {
     if (delhook) lua_sethook(lua,NULL,0,0); /* Disable hook */
     if (server.lua_timedout) {
         int ret;
-        dmtr_qtoken_t qt;
+        dmtr_qtoken_t qt = 0;
 
         server.lua_timedout = 0;
         /* Restore the readable handler that was unregistered when the

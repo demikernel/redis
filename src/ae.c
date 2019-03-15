@@ -79,6 +79,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->maxfd = -1;
     eventLoop->beforesleep = NULL;
     eventLoop->aftersleep = NULL;
+    eventLoop->qEvents = NULL;
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
@@ -149,7 +150,9 @@ int aeCreateQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt, aeQueueProc *qP
         return AE_ERR;
     }
 
+    fprintf(stderr, "acCreateQueueEvent:: scheduling event 0x%016lx.\n", qt);
     aeQueueEvent *e = (aeQueueEvent *)zmalloc(sizeof(struct aeQueueEvent));
+    memset(e, 0, sizeof(*e));
     e->qt = qt;
     e->qProc = qProc;
     e->clientData = clientData;
@@ -162,6 +165,8 @@ void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt) {
         fprintf(stderr, "`eventLoop` cannot be `NULL`.\n");
         abort();
     }
+
+    fprintf(stderr, "acDeleteQueueEvent:: deleting event 0x%016lx.\n", qt);
 
     if (0 == qt) {
         aeQueueEvent *e, *tmp;
@@ -457,6 +462,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             size_t i = 0;
             for (aeQueueEvent *e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
                 qts[i] = e->qt;
+                ++i;
             }
 
             dmtr_qresult_t qr;

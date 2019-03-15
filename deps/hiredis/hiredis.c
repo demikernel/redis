@@ -892,7 +892,7 @@ int redisBufferWrite(redisContext *c, int *done) {
         ret = dmtr_poll(&qr, qt);
         if (EAGAIN == ret || EINTR == ret) {
             /* Try again later */
-            c->pop_qt = qt;
+            c->push_qt = qt;
             return REDIS_OK;
         }
 
@@ -908,7 +908,7 @@ int redisBufferWrite(redisContext *c, int *done) {
     }
 
     if (done != NULL) *done = 1;
-    c->pop_qt = 0;
+    c->push_qt = 0;
     return REDIS_OK;
 }
 

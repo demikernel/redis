@@ -1332,7 +1332,7 @@ char *sendSynchronousCommand(int flags, int fd, ...) {
         }
         cmd = sdscatlen(cmd,"\r\n",2);
         va_end(ap);
-        
+
         /* Transfer command to the server. */
         if (syncWrite(fd,cmd,sdslen(cmd),server.repl_syncio_timeout*1000)
             == -1)
@@ -2204,7 +2204,7 @@ void replicationDiscardCachedMaster(void) {
  * master left. */
 void replicationResurrectCachedMaster(int newfd) {
     int ret;
-    dmtr_qtoken_t qt;
+    dmtr_qtoken_t qt = 0;
 
     server.master = server.cached_master;
     server.cached_master = NULL;
@@ -2222,7 +2222,7 @@ void replicationResurrectCachedMaster(int newfd) {
         fprintf(stderr, "failed to start `pop` operation\n");
         abort();
     }
-    
+
     if (aeCreateQueueEvent(server.el, qt,
                           readQueryFromClient, server.master)) {
         serverLog(LL_WARNING,"Error resurrecting the cached master, impossible to add the readable handler: %s", strerror(errno));

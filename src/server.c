@@ -56,6 +56,8 @@
 #include <locale.h>
 #include <sys/socket.h>
 
+#include <dmtr/libos.h>
+
 /* Our shared "common" objects */
 
 struct sharedObjectsStruct shared;
@@ -1924,12 +1926,20 @@ void initServer(void) {
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
     for (j = 0; j < server.ipfd_count; j++) {
-        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
+        int ret;
+        dmtr_qtoken_t qt;
+
+        ret = dmtr_accept(&qt, server.ipfd[j]);
+        if (0 != ret) {
+            serverPanic("Unrecoverable error starting accept operation.");
+        }
+
+        if (aeCreateQueueEvent(server.el, qt,
             acceptTcpHandler,NULL) == AE_ERR)
-            {
-                serverPanic(
-                    "Unrecoverable error creating server.ipfd file event.");
-            }
+        {
+            serverPanic(
+                "Unrecoverable error creating server.ipfd queue event.");
+        }
     }
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
@@ -3704,6 +3714,7 @@ int redisIsSupervised(int mode) {
 int main(int argc, char **argv) {
     struct timeval tv;
     int j;
+    int ret;
 
 #ifdef REDIS_TEST
     if (argc == 3 && !strcasecmp(argv[1], "test")) {
@@ -3730,6 +3741,12 @@ int main(int argc, char **argv) {
         return -1; /* test not found */
     }
 #endif
+
+    ret = dmtr_init(0, NULL);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to initialize Demeter.\n");
+        return ret;
+    }
 
     /* We need to initialize our libraries, and the server configuration. */
 #ifdef INIT_SETPROCTITLE_REPLACEMENT

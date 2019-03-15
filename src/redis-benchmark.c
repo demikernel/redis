@@ -194,6 +194,8 @@ static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdat
         abort();
     }
 
+    fprintf(stderr, "readHandler(): completing qt 0x%016lx.\n", qr->qr_qt);
+
     /* Calculate latency only for the first read event. This means that the
      * server already sent the reply and we need to parse it. Parsing overhead
      * is not part of the latency, so calculate it only once, here. */
@@ -260,12 +262,14 @@ static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     UNUSED(el);
     client c = privdata;
     int ret;
-    dmtr_qtoken_t qt;
+    dmtr_qtoken_t qt = 0;
 
     if (NULL == qr) {
         fprintf(stderr, "`qr` should not be `NULL`.\n");
         abort();
     }
+
+    fprintf(stderr, "writeHandler(): completing qt 0x%016lx.\n", qr->qr_qt);
 
     if (DMTR_OPC_PUSH != qr->qr_opcode) {
         fprintf(stderr, "in `writeHandler()`, `qr.qr_opcode` must be `DMTR_OPC_PUSH`.\n");
@@ -305,7 +309,7 @@ static void writeRequestBuffer(client c) {
 
     if (sdslen(c->obuf) > c->written) {
         dmtr_sgarray_t sga;
-        dmtr_qtoken_t qt;
+        dmtr_qtoken_t qt = 0;
         int ret;
 
         memset(&sga, 0, sizeof(sga));
@@ -679,12 +683,19 @@ int main(int argc, const char **argv) {
     int i;
     char *data, *cmd;
     int len;
+    int ret;
 
     client c;
 
     srandom(time(NULL));
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
+
+    ret = dmtr_init(0, NULL);
+    if (0 != ret) {
+        fprintf(stderr, "Unable to initialize Demeter.\n");
+        return ret;
+    }
 
     config.numclients = 50;
     config.requests = 100000;
