@@ -45,7 +45,7 @@
 #include "zmalloc.h"
 #include "config.h"
 
-#include <dmtr/wait.h>
+#include <dmtr/libos.h>
 
 /* Include the best multiplexing layer supported by this system.
  * The following should be ordered by performances, descending. */
@@ -408,9 +408,37 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
+    size_t qEventCount;
+
+    qEventCount = HASH_COUNT(eventLoop->qEvents);
 
     /* Nothing to do? return ASAP */
-    if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
+    if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS) && 0 == qEventCount) return 0;
+
+    {
+        dmtr_qresult_t qr;
+        aeQueueEvent *e = NULL;
+        int ret = -1;
+
+        for (e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
+            ret = dmtr_poll(&qr, e->qt);
+            if (EAGAIN == ret) {
+                continue;
+            } else if (0 == ret) {
+                break;
+            } else {
+                fprintf(stderr, "unexpected failure to poll queue token");
+                abort();
+            }
+        }
+
+        if (0 == ret) {
+            // invoke the callback
+            e->qProc(eventLoop, &qr, e->clientData);
+            aeDeleteQueueEvent(eventLoop, e->qt);
+            ++processed;
+        }
+    }
 
     /* Note that we want call select() even if there are no
      * file events to process as long as we want to process time
@@ -454,31 +482,6 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 /* Otherwise we can block */
                 tvp = NULL; /* wait forever */
             }
-        }
-
-        {
-            size_t eventCount = HASH_COUNT(eventLoop->qEvents);
-            dmtr_qtoken_t *qts = (dmtr_qtoken_t *)alloca(sizeof(dmtr_qtoken_t) * eventCount);
-            size_t i = 0;
-            for (aeQueueEvent *e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
-                qts[i] = e->qt;
-                ++i;
-            }
-
-            dmtr_qresult_t qr;
-            memset(&qr, 0, sizeof(qr));
-            int ret = dmtr_wait_any(&qr, NULL, qts, eventCount);
-            if (0 != ret) {
-                fprintf(stderr, "unexpected failure to wait on queue token");
-                abort();
-            }
-
-            // find the event that completed.
-            aeQueueEvent *e = NULL;
-            HASH_FIND(hh, eventLoop->qEvents, &qr.qr_qt, sizeof(qr.qr_qt), e);
-            // invoke the callback
-            e->qProc(eventLoop, &qr, e->clientData);
-            aeDeleteQueueEvent(eventLoop, e->qt);
         }
 
         /* Call the multiplexing API, will return only on timeout or when

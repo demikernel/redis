@@ -65,15 +65,25 @@ static void anetSetError(char *err, const char *fmt, ...)
 }
 
 int anetSetBlock(char *err, int fd, int non_block) {
-#if 0
     int flags;
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
 
     /* Set the socket blocking (if non_block is zero) or non-blocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
     if ((flags = fcntl(fd, F_GETFL)) == -1) {
         anetSetError(err, "fcntl(F_GETFL): %s", strerror(errno));
-        return ANET_ERR;
+        return ANET_OK;
     }
 
     if (non_block)
@@ -85,12 +95,8 @@ int anetSetBlock(char *err, int fd, int non_block) {
         anetSetError(err, "fcntl(F_SETFL,O_NONBLOCK): %s", strerror(errno));
         return ANET_ERR;
     }
-#else
-    UNUSED(err);
-    UNUSED(fd);
-    UNUSED(non_block);
+
     return ANET_OK;
-#endif
 }
 
 int anetNonBlock(char *err, int fd) {
@@ -106,8 +112,18 @@ int anetBlock(char *err, int fd) {
  * the probe send time, interval, and count. */
 int anetKeepAlive(char *err, int fd, int interval)
 {
-#if 0
     int val = 1;
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
 
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1)
     {
@@ -147,28 +163,30 @@ int anetKeepAlive(char *err, int fd, int interval)
 #else
     ((void) interval); /* Avoid unused var warning for non Linux systems. */
 #endif
-#else
-    UNUSED(err);
-    UNUSED(fd);
-    UNUSED(interval);
+
     return ANET_OK;
-#endif
 }
 
 static int anetSetTcpNoDelay(char *err, int fd, int val)
 {
-#if 0
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
+
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) == -1)
     {
         anetSetError(err, "setsockopt TCP_NODELAY: %s", strerror(errno));
         return ANET_ERR;
     }
-#else
-    UNUSED(err);
-    UNUSED(fd);
-    UNUSED(val);
     return ANET_OK;
-#endif
 }
 
 int anetEnableTcpNoDelay(char *err, int fd)
@@ -184,40 +202,65 @@ int anetDisableTcpNoDelay(char *err, int fd)
 
 int anetSetSendBuffer(char *err, int fd, int buffsize)
 {
-#if 0
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
+
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buffsize, sizeof(buffsize)) == -1)
     {
         anetSetError(err, "setsockopt SO_SNDBUF: %s", strerror(errno));
         return ANET_ERR;
     }
-#else
-    UNUSED(err);
-    UNUSED(fd);
-    UNUSED(buffsize);
+
     return ANET_OK;
-#endif
 }
 
 int anetTcpKeepAlive(char *err, int fd)
 {
-#if 0
     int yes = 1;
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
+
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt SO_KEEPALIVE: %s", strerror(errno));
         return ANET_ERR;
     }
-#else
-    UNUSED(err);
-    UNUSED(fd);
+
     return ANET_OK;
-#endif
 }
 
 /* Set the socket send timeout (SO_SNDTIMEO socket option) to the specified
  * number of milliseconds, or disable it if the 'ms' argument is zero. */
 int anetSendTimeout(char *err, int fd, long long ms) {
-#if 0
     struct timeval tv;
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
 
     tv.tv_sec = ms/1000;
     tv.tv_usec = (ms%1000)*1000;
@@ -225,12 +268,8 @@ int anetSendTimeout(char *err, int fd, long long ms) {
         anetSetError(err, "setsockopt SO_SNDTIMEO: %s", strerror(errno));
         return ANET_ERR;
     }
-#else
-    UNUSED(err);
-    UNUSED(fd);
-    UNUSED(ms);
+
     return ANET_OK;
-#endif
 }
 
 /* anetGenericResolve() is called by anetResolve() and anetResolveIP() to
@@ -276,19 +315,27 @@ int anetResolveIP(char *err, char *host, char *ipbuf, size_t ipbuf_len) {
 }
 
 static int anetSetReuseAddr(char *err, int fd) {
-#if 0
     int yes = 1;
+    int ret, flag;
+
+    ret = dmtr_is_qd_valid(&flag, fd);
+    if (ret != 0) {
+        fprintf(stderr, "failure to validate qd.\n");
+        abort();
+    }
+
+    if (flag) {
+        return ANET_OK;
+    }
+
     /* Make sure connection-intensive things like the redis benckmark
      * will be able to close/open sockets a zillion of times */
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt SO_REUSEADDR: %s", strerror(errno));
         return ANET_ERR;
     }
-#else
-    UNUSED(err);
-    UNUSED(fd);
+
     return ANET_OK;
-#endif
 }
 
 static int anetCreateSocket(char *err, int domain) {
