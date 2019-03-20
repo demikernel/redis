@@ -935,8 +935,8 @@ int writeToClient(int fd, client *c, int handler_installed) {
             len = c->bufpos-c->sentlen;
             memset(&sga, 0, sizeof(sga));
             sga.sga_numsegs = 1;
-            sga.sga_segs[1].sgaseg_buf = c->buf+c->sentlen;
-            sga.sga_segs[1].sgaseg_len = len;
+            sga.sga_segs[0].sgaseg_buf = c->buf+c->sentlen;
+            sga.sga_segs[0].sgaseg_len = len;
             ret = dmtr_push(&qt, fd, &sga);
             if (0 != ret) break;
             ret = dmtr_wait(NULL, qt);
@@ -966,8 +966,8 @@ int writeToClient(int fd, client *c, int handler_installed) {
             len = objlen - c->sentlen;
             memset(&sga, 0, sizeof(sga));
             sga.sga_numsegs = 1;
-            sga.sga_segs[1].sgaseg_buf = o + c->sentlen;
-            sga.sga_segs[1].sgaseg_len = len;
+            sga.sga_segs[0].sgaseg_buf = o + c->sentlen;
+            sga.sga_segs[0].sgaseg_len = len;
             ret = dmtr_push(&qt, fd, &sga);
             if (0 != ret) break;
             ret = dmtr_wait(NULL, qt);

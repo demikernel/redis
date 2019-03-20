@@ -126,7 +126,7 @@ static long long mstime(void) {
 
 static void freeClient(client c) {
     listNode *ln;
-    aeDeleteQueueEvent(config.el,0);
+    aeDeleteQueueEvents(config.el,c);
     redisFree(c->context);
     sdsfree(c->obuf);
     zfree(c->randptr);
@@ -148,7 +148,7 @@ static void freeAllClients(void) {
 }
 
 static void resetClient(client c) {
-    aeDeleteQueueEvent(config.el,0);
+    aeDeleteQueueEvents(config.el,c);
     c->pending = config.pipeline;
 }
 

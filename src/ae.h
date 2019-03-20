@@ -124,6 +124,7 @@ void aeDeleteEventLoop(aeEventLoop *eventLoop);
 void aeStop(aeEventLoop *eventLoop);
 int aeCreateQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt, aeQueueProc *qProc, void *clientData);
 void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt);
+void aeDeleteQueueEvents(aeEventLoop *eventLoop, void *clientData);
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData);
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask);

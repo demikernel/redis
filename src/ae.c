@@ -161,28 +161,45 @@ int aeCreateQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt, aeQueueProc *qP
 }
 
 void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt) {
+    aeQueueEvent *e = NULL;
+
     if (NULL == eventLoop) {
         fprintf(stderr, "`eventLoop` cannot be `NULL`.\n");
         abort();
     }
 
-    fprintf(stderr, "acDeleteQueueEvent:: deleting event 0x%016lx.\n", qt);
-
     if (0 == qt) {
-        aeQueueEvent *e, *tmp;
-        HASH_ITER(hh, eventLoop->qEvents, e, tmp) {
+        fprintf(stderr, "acDeleteQueueEvent: `qt` cannot be zero.\n", qt);
+        abort();
+    }
+
+    fprintf(stderr, "acDeleteQueueEvent: deleting event 0x%016lx.\n", qt);
+
+    HASH_FIND(hh, eventLoop->qEvents, &qt, sizeof(qt), e);
+    if (NULL == e) {
+        return;
+    }
+
+    HASH_DEL(eventLoop->qEvents, e);
+    zfree(e);
+}
+
+void aeDeleteQueueEvents(aeEventLoop *eventLoop, void *clientData) {
+    aeQueueEvent *e, *tmp;
+
+    if (NULL == eventLoop) {
+        fprintf(stderr, "`eventLoop` cannot be `NULL`.\n");
+        abort();
+    }
+
+    fprintf(stderr, "acDeleteQueueEvent: deleting all queue events associated with %p.\n", clientData);
+
+    HASH_ITER(hh, eventLoop->qEvents, e, tmp) {
+        if (clientData == e->clientData) {
+            fprintf(stderr, "acDeleteQueueEvent: deleting event 0x%016lx.\n", e->qt);
             HASH_DEL(eventLoop->qEvents, e);
             zfree(e);
         }
-    } else {
-        aeQueueEvent *e = NULL;
-        HASH_FIND(hh, eventLoop->qEvents, &qt, sizeof(qt), e);
-        if (NULL == e) {
-            return;
-        }
-
-        HASH_DEL(eventLoop->qEvents, e);
-        zfree(e);
     }
 }
 
