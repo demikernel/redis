@@ -102,6 +102,7 @@ typedef struct _client {
 /* Prototypes */
 static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata);
 static void createMissingClients(client c);
+static void writeNextRequest(client c);
 
 /* Implementation */
 static long long ustime(void) {
@@ -149,7 +150,9 @@ static void freeAllClients(void) {
 
 static void resetClient(client c) {
     aeDeleteQueueEvents(config.el,c);
+    c->written = 0;
     c->pending = config.pipeline;
+    writeNextRequest(c);
 }
 
 static void randomizeClientKey(client c) {
@@ -287,7 +290,7 @@ static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     aeCreateQueueEvent(config.el,qt,readHandler,c);
 }
 
-static void writeRequestBuffer(client c) {
+void writeNextRequest(client c) {
     if (NULL == c) {
         fprintf(stderr, "`c` is `NULL`\n");
         abort();
@@ -438,7 +441,7 @@ static client createClient(char *cmd, size_t len, client from) {
         }
     }
     if (config.idlemode == 0)
-        writeRequestBuffer(c);
+        writeNextRequest(c);
     listAddNodeTail(config.clients,c);
     config.liveclients++;
     return c;
