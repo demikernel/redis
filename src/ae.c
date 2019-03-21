@@ -63,6 +63,8 @@
     #endif
 #endif
 
+static void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt);
+
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
@@ -169,11 +171,11 @@ void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt) {
     }
 
     if (0 == qt) {
-        fprintf(stderr, "acDeleteQueueEvent: `qt` cannot be zero.\n", qt);
+        fprintf(stderr, "aeDeleteQueueEvent: `qt` cannot be zero.\n", qt);
         abort();
     }
 
-    fprintf(stderr, "acDeleteQueueEvent: deleting event 0x%016lx.\n", qt);
+    fprintf(stderr, "aeDeleteQueueEvent: deleting qt 0x%016lx.\n", qt);
 
     HASH_FIND(hh, eventLoop->qEvents, &qt, sizeof(qt), e);
     if (NULL == e) {
@@ -192,11 +194,11 @@ void aeDeleteQueueEvents(aeEventLoop *eventLoop, void *clientData) {
         abort();
     }
 
-    fprintf(stderr, "acDeleteQueueEvent: deleting all queue events associated with %p.\n", clientData);
+    fprintf(stderr, "aeDeleteQueueEvents: deleting all queue events associated with %p.\n", clientData);
 
     HASH_ITER(hh, eventLoop->qEvents, e, tmp) {
         if (clientData == e->clientData) {
-            fprintf(stderr, "acDeleteQueueEvent: deleting event 0x%016lx.\n", e->qt);
+            fprintf(stderr, "aeDeleteQueueEvents: deleting qt 0x%016lx.\n", e->qt);
             HASH_DEL(eventLoop->qEvents, e);
             zfree(e);
         }
@@ -434,7 +436,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
     {
         dmtr_qresult_t qr;
-        aeQueueEvent *e = NULL;
+        aeQueueEvent *e, *tmp;
         int ret = -1;
 
         for (e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
@@ -444,15 +446,20 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             } else if (0 == ret) {
                 break;
             } else {
-                fprintf(stderr, "unexpected failure to poll queue token");
+                fprintf(stderr, "unexpected failure to poll queue token\n");
                 abort();
             }
         }
 
         if (0 == ret) {
+            // it appears that if `e->qProc()` modifies the hash table,
+            // `e` can end up pointing to something different, so we need
+            // to preserve any information that we will use afterwards.
+            dmtr_qtoken_t qt = e->qt;
+
             // invoke the callback
             e->qProc(eventLoop, &qr, e->clientData);
-            aeDeleteQueueEvent(eventLoop, e->qt);
+            aeDeleteQueueEvent(eventLoop, qt);
             ++processed;
         }
     }

@@ -86,6 +86,9 @@ client *createClient(int fd) {
         anetEnableTcpNoDelay(NULL,fd);
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
+
+        fprintf(stderr, "createClient(): starting pop operation...\n");
+
         ret = dmtr_pop(&qt, fd);
         if (0 != ret ||
             aeCreateQueueEvent(server.el,qt,
@@ -932,6 +935,8 @@ int writeToClient(int fd, client *c, int handler_installed) {
             dmtr_qtoken_t qt;
             size_t len;
 
+            fprintf(stderr, "writeToClient(): sync push operation (c->bufpos > 0)...\n");
+
             len = c->bufpos-c->sentlen;
             memset(&sga, 0, sizeof(sga));
             sga.sga_numsegs = 1;
@@ -962,6 +967,8 @@ int writeToClient(int fd, client *c, int handler_installed) {
                 listDelNode(c->reply,listFirst(c->reply));
                 continue;
             }
+
+            fprintf(stderr, "writeToClient(): sync push operation (!(c->bufpos > 0))...\n");
 
             len = objlen - c->sentlen;
             memset(&sga, 0, sizeof(sga));
@@ -1019,7 +1026,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
     }
     if (!clientHasPendingReplies(c)) {
         c->sentlen = 0;
-        if (handler_installed) aeDeleteQueueEvent(server.el,c->fd);
+        if (handler_installed) aeDeleteQueueEvents(server.el,c);
 
         /* Close connection after entire reply has been sent. */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
@@ -1415,7 +1422,8 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     int nread, readlen;
     size_t qblen;
     const dmtr_sgarray_t *sga = NULL;
-    UNUSED(el);
+    dmtr_qtoken_t qt = 0;
+    int ret = -1;
 
     if (NULL == qr) {
         fprintf(stderr, "`qr` is not allowed to be `NULL`\n");
@@ -1427,7 +1435,7 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
         abort();
     }
 
-    fprintf(stderr, "readQueryFromClient(): completing qt 0x%016lx, opcode %d.\n", qr->qr_qt, qr->qr_opcode);
+    fprintf(stderr, "readQueryFromClient(): completing pop (qt 0x%016lx).\n", qr->qr_qt);
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
@@ -1502,6 +1510,17 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
                     c->pending_querybuf, applied);
             sdsrange(c->pending_querybuf,applied,-1);
         }
+    }
+
+    fprintf(stderr, "readQueryFromClient(): starting pop operation...\n");
+
+    ret = dmtr_pop(&qt, qr->qr_qd);
+    if (0 != ret ||
+        aeCreateQueueEvent(el,qt,
+        readQueryFromClient, c) == AE_ERR)
+    {
+        dmtr_close(qr->qr_qd);
+        zfree(c);
     }
 }
 

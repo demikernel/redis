@@ -315,6 +315,8 @@ void writeNextRequest(client c) {
         dmtr_qtoken_t qt = 0;
         int ret;
 
+        fprintf(stderr, "writeNextRequest(): starting push operation...\n");
+
         memset(&sga, 0, sizeof(sga));
         sga.sga_numsegs = 1;
         sga.sga_segs[0].sgaseg_buf = c->obuf+c->written;
