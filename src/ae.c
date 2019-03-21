@@ -171,7 +171,7 @@ void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt) {
     }
 
     if (0 == qt) {
-        fprintf(stderr, "aeDeleteQueueEvent: `qt` cannot be zero.\n", qt);
+        fprintf(stderr, "aeDeleteQueueEvent: `qt` cannot be zero.\n");
         abort();
     }
 
@@ -436,7 +436,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
     {
         dmtr_qresult_t qr;
-        aeQueueEvent *e, *tmp;
+        aeQueueEvent *e;
         int ret = -1;
 
         for (e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
