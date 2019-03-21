@@ -87,7 +87,7 @@ client *createClient(int fd) {
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
 
-        fprintf(stderr, "createClient(): starting pop operation...\n");
+        //fprintf(stderr, "createClient(): starting pop operation...\n");
 
         ret = dmtr_pop(&qt, fd);
         if (0 != ret ||
@@ -702,7 +702,7 @@ void acceptTcpHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata)
         abort();
     }
 
-    fprintf(stderr, "Accepted connection on qd 0x%08x.\n", qr->qr_qd);
+    //fprintf(stderr, "acceptTcpHandler(): Accepted connection on qd 0x%08x.\n", qr->qr_qd);
 
     ret = dmtr_accept(&qt, qr->qr_qd);
     if (0 != ret) {
@@ -935,7 +935,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
             dmtr_qtoken_t qt;
             size_t len;
 
-            fprintf(stderr, "writeToClient(): sync push operation (c->bufpos > 0)...\n");
+            //fprintf(stderr, "writeToClient(): sync push operation (c->bufpos > 0)...\n");
 
             len = c->bufpos-c->sentlen;
             memset(&sga, 0, sizeof(sga));
@@ -968,7 +968,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
                 continue;
             }
 
-            fprintf(stderr, "writeToClient(): sync push operation (!(c->bufpos > 0))...\n");
+            //fprintf(stderr, "writeToClient(): sync push operation (!(c->bufpos > 0))...\n");
 
             len = objlen - c->sentlen;
             memset(&sga, 0, sizeof(sga));
@@ -1435,7 +1435,7 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
         abort();
     }
 
-    fprintf(stderr, "readQueryFromClient(): completing pop (qt 0x%016lx).\n", qr->qr_qt);
+    //fprintf(stderr, "readQueryFromClient(): completing pop (qt 0x%016lx).\n", qr->qr_qt);
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
@@ -1512,7 +1512,7 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
         }
     }
 
-    fprintf(stderr, "readQueryFromClient(): starting pop operation...\n");
+    //fprintf(stderr, "readQueryFromClient(): starting pop operation...\n");
 
     ret = dmtr_pop(&qt, qr->qr_qd);
     if (0 != ret ||
