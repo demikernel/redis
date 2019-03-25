@@ -434,6 +434,10 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     /* Nothing to do? return ASAP */
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS) && 0 == qEventCount) return 0;
 
+    // since we're polling multiple frameworks (demeter, epoll, etc.), we
+    // should never block waiting on anything.
+    flags = flags | AE_DONT_WAIT;
+
     {
         dmtr_qresult_t qr;
         aeQueueEvent *e;
