@@ -690,7 +690,7 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     c->flags |= flags;
 }
 
-void acceptTcpHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+void acceptTcpHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
     int cport, ret;
     char cip[NET_IP_STR_LEN];
     dmtr_qtoken_t qt = 0;
@@ -715,6 +715,11 @@ void acceptTcpHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata)
     {
         fprintf(stderr, "acceptTcpHandler(): failed to create queue event.\n");
         abort();
+    }
+
+    if (0 != code) {
+        fprintf(stderr, "acceptTcpHandler(): failed to complete accept() operation (code %d)", code);
+        return;
     }
 
     // copied from `anetTcpAccept()`.
@@ -1417,7 +1422,7 @@ void processInputBuffer(client *c) {
     server.current_client = NULL;
 }
 
-void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+void readQueryFromClient(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
     client *c = (client*) privdata;
     int nread, readlen;
     size_t qblen;
@@ -1428,6 +1433,14 @@ void readQueryFromClient(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     if (NULL == qr) {
         fprintf(stderr, "`qr` is not allowed to be `NULL`\n");
         abort();
+    }
+
+    if (0 != code) {
+        fprintf(stderr, "readQueryFromClient(): failure to complete operation (completion code %d)\n", code);
+        // todo: calling `freeClient(c)` here seems to cause cause the
+        // listen/accept mechanism to fail, so we leak it for now.
+        //freeClient(c);
+        return;
     }
 
     if (qr->qr_opcode != DMTR_OPC_POP) {

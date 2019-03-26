@@ -100,7 +100,7 @@ typedef struct _client {
 } *client;
 
 /* Prototypes */
-static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata);
+static void writeHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata);
 static void createMissingClients(client c);
 static void writeNextRequest(client c);
 
@@ -187,7 +187,7 @@ static void clientDone(client c) {
     }
 }
 
-static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+static void readHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
     client c = privdata;
     void *reply = NULL;
     UNUSED(el);
@@ -195,6 +195,17 @@ static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdat
     if (NULL == qr) {
         fprintf(stderr, "`qr` is `NULL`\n");
         abort();
+    }
+
+    switch (code) {
+    default:
+        fprintf(stderr, "readHandler(): failure to complete operation (completion code %d)\n", code);
+        return;
+    case ECONNABORTED:
+        freeClient(c);
+        return;
+    case 0:
+        break;
     }
 
     //fprintf(stderr, "readHandler(): completing qt 0x%016lx.\n", qr->qr_qt);
@@ -261,7 +272,7 @@ static void readHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdat
     }
 }
 
-static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privdata) {
+static void writeHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
     UNUSED(el);
     client c = privdata;
     int ret;
@@ -270,6 +281,17 @@ static void writeHandler(aeEventLoop *el, const dmtr_qresult_t *qr, void *privda
     if (NULL == qr) {
         fprintf(stderr, "`qr` should not be `NULL`.\n");
         abort();
+    }
+
+    switch (code) {
+        default:
+            fprintf(stderr, "writeHandler(): failure to complete operation (completion code %d)\n", code);
+            return;
+        case ECONNABORTED:
+            freeClient(c);
+            return;
+        case 0:
+            break;
     }
 
     //fprintf(stderr, "writeHandler(): completing qt 0x%016lx.\n", qr->qr_qt);

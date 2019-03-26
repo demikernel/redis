@@ -440,29 +440,26 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
     {
         dmtr_qresult_t qr;
-        aeQueueEvent *e;
-        int ret = -1;
+        aeQueueEvent *e, *tmp;
 
-        for (e = eventLoop->qEvents; e != NULL; e = e->hh.next) {
+        // we poll all known qtokens to avoid starvation.
+        HASH_ITER(hh, eventLoop->qEvents, e, tmp) {
+            int ret = -1;
+            dmtr_qtoken_t qt;
+
             ret = dmtr_poll(&qr, e->qt);
             if (EAGAIN == ret) {
                 continue;
-            } else if (0 == ret) {
-                break;
-            } else {
-                fprintf(stderr, "unexpected failure to poll queue token\n");
-                abort();
             }
-        }
 
-        if (0 == ret) {
-            // it appears that if `e->qProc()` modifies the hash table,
-            // `e` can end up pointing to something different, so we need
-            // to preserve any information that we will use afterwards.
-            dmtr_qtoken_t qt = e->qt;
+            // it appears that if `e->qProc()` modifies the hash
+            // table, `e` can end up pointing to something different,
+            // so we need to preserve any information that we will
+            // use afterwards.
+            qt = e->qt;
 
             // invoke the callback
-            e->qProc(eventLoop, &qr, e->clientData);
+            e->qProc(eventLoop, ret, &qr, e->clientData);
             aeDeleteQueueEvent(eventLoop, qt);
             ++processed;
         }
