@@ -787,9 +787,8 @@ void unlinkClient(client *c) {
         listDelNode(server.clients,ln);
 
         /* Unregister async I/O handlers and close the socket. */
-        aeDeleteFileEvent(server.el,c->fd,AE_READABLE);
-        aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
-        close(c->fd);
+        aeDeleteQueueEvents(server.el, c);
+        (void)dmtr_close(c->fd);
         c->fd = -1;
     }
 
@@ -1437,9 +1436,7 @@ void readQueryFromClient(aeEventLoop *el, int code, const dmtr_qresult_t *qr, vo
 
     if (0 != code) {
         fprintf(stderr, "readQueryFromClient(): failure to complete operation (completion code %d)\n", code);
-        // todo: calling `freeClient(c)` here seems to cause cause the
-        // listen/accept mechanism to fail, so we leak it for now.
-        //freeClient(c);
+        freeClient(c);
         return;
     }
 
