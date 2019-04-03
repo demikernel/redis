@@ -718,7 +718,7 @@ void acceptTcpHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void 
     }
 
     if (0 != code) {
-        fprintf(stderr, "acceptTcpHandler(): failed to complete accept() operation (code %d)", code);
+        fprintf(stderr, "acceptTcpHandler(): failed to complete accept() operation (code %d)\n", code);
         return;
     }
 
