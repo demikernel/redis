@@ -938,6 +938,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
             dmtr_sgarray_t sga;
             dmtr_qtoken_t qt;
             size_t len;
+            uint64_t t0;
 
             //fprintf(stderr, "writeToClient(): sync push operation (c->bufpos > 0)...\n");
 
@@ -946,10 +947,14 @@ int writeToClient(int fd, client *c, int handler_installed) {
             sga.sga_numsegs = 1;
             sga.sga_segs[0].sgaseg_buf = c->buf+c->sentlen;
             sga.sga_segs[0].sgaseg_len = len;
+            t0 = dmtr_now_ns();
             ret = dmtr_push(&qt, fd, &sga);
             if (0 != ret) break;
+            (void)dmtr_record_latency(aePushLatency, dmtr_now_ns() - t0);
+            t0 = dmtr_now_ns();
             ret = dmtr_wait(NULL, qt);
             if (0 != ret) break;
+            (void)dmtr_record_latency(aeWaitForPushLatency, dmtr_now_ns() - t0);
             c->sentlen += len;
             totwritten += len;
 
@@ -963,6 +968,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
             dmtr_sgarray_t sga;
             dmtr_qtoken_t qt;
             size_t len;
+            uint64_t t0;
 
             o = listNodeValue(listFirst(c->reply));
             objlen = sdslen(o);
@@ -979,10 +985,14 @@ int writeToClient(int fd, client *c, int handler_installed) {
             sga.sga_numsegs = 1;
             sga.sga_segs[0].sgaseg_buf = o + c->sentlen;
             sga.sga_segs[0].sgaseg_len = len;
+            t0 = dmtr_now_ns();
             ret = dmtr_push(&qt, fd, &sga);
             if (0 != ret) break;
+            (void)dmtr_record_latency(aePushLatency, dmtr_now_ns() - t0);
+            t0 = dmtr_now_ns();
             ret = dmtr_wait(NULL, qt);
             if (0 != ret) break;
+            (void)dmtr_record_latency(aeWaitForPushLatency, dmtr_now_ns() - t0);
             c->sentlen += len;
             totwritten += len;
 

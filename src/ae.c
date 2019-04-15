@@ -63,11 +63,19 @@
     #endif
 #endif
 
+dmtr_latency_t *aePollLatency = NULL;
+dmtr_latency_t *aePushLatency = NULL;
+dmtr_latency_t *aeWaitForPushLatency = NULL;
+
 static void aeDeleteQueueEvent(aeEventLoop *eventLoop, dmtr_qtoken_t qt);
 
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
+
+    if (0 != dmtr_new_latency(&aePollLatency, "redis-poll")) goto err;
+    if (0 != dmtr_new_latency(&aePushLatency, "redis-push")) goto err;
+    if (0 != dmtr_new_latency(&aeWaitForPushLatency, "redis-wait-push")) goto err;
 
     if ((eventLoop = zmalloc(sizeof(*eventLoop))) == NULL) goto err;
     eventLoop->events = zmalloc(sizeof(aeFileEvent)*setsize);
@@ -448,11 +456,15 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         HASH_ITER(hh, eventLoop->qEvents, e, tmp) {
             int ret = -1;
             dmtr_qtoken_t qt;
+            uint64_t t0;
 
+            t0 = dmtr_now_ns();
             ret = dmtr_poll(&qr, e->qt);
             if (EAGAIN == ret) {
                 continue;
             }
+
+            (void)dmtr_record_latency(aePollLatency, dmtr_now_ns() - t0);
 
             // it appears that if `e->qProc()` modifies the hash
             // table, `e` can end up pointing to something different,

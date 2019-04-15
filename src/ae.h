@@ -34,8 +34,10 @@
 #define __AE_H__
 
 #include <time.h>
-#include <dmtr/types.h>
+
 #include "uthash.h"
+#include <dmtr/latency.h>
+#include <dmtr/types.h>
 
 #define AE_OK 0
 #define AE_ERR -1
@@ -117,6 +119,10 @@ typedef struct aeEventLoop {
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
 } aeEventLoop;
+
+extern dmtr_latency_t *aePollLatency;
+extern dmtr_latency_t *aePushLatency;
+extern dmtr_latency_t *aeWaitForPushLatency;
 
 /* Prototypes */
 aeEventLoop *aeCreateEventLoop(int setsize);
