@@ -950,11 +950,11 @@ int writeToClient(int fd, client *c, int handler_installed) {
             t0 = dmtr_now_ns();
             ret = dmtr_push(&qt, fd, &sga);
             if (0 != ret) break;
-            dmtr_record_latency(aePushLatency, dmtr_now_ns() - t0);
+            (void)dmtr_record_latency(aePushLatency, dmtr_now_ns() - t0);
             t0 = dmtr_now_ns();
             ret = dmtr_wait(NULL, qt);
             if (0 != ret) break;
-            dmtr_record_latency(aeWaitForPushLatency, dmtr_now_ns() - t0);
+            (void)dmtr_record_latency(aeWaitForPushLatency, dmtr_now_ns() - t0);
             c->sentlen += len;
             totwritten += len;
 
@@ -988,11 +988,11 @@ int writeToClient(int fd, client *c, int handler_installed) {
             t0 = dmtr_now_ns();
             ret = dmtr_push(&qt, fd, &sga);
             if (0 != ret) break;
-            dmtr_record_latency(aePushLatency, dmtr_now_ns() - t0);
+            (void)dmtr_record_latency(aePushLatency, dmtr_now_ns() - t0);
             t0 = dmtr_now_ns();
             ret = dmtr_wait(NULL, qt);
             if (0 != ret) break;
-            dmtr_record_latency(aeWaitForPushLatency, dmtr_now_ns() - t0);
+            (void)dmtr_record_latency(aeWaitForPushLatency, dmtr_now_ns() - t0);
             c->sentlen += len;
             totwritten += len;
 

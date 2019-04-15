@@ -2612,12 +2612,17 @@ int prepareForShutdown(int flags) {
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
         server.sentinel_mode ? "Sentinel" : "Redis");
 
-    dmtr_dump_latency(stderr, aePollLatency);
-    dmtr_delete_latency(aePollLatency);
-    dmtr_dump_latency(stderr, aePushLatency);
-    dmtr_delete_latency(aePushLatency);
-    dmtr_dump_latency(stderr, aeWaitForPushLatency);
-    dmtr_delete_latency(aeWaitForPushLatency);
+    if (NULL != aePollLatency) {
+        dmtr_dump_latency(stderr, aePollLatency);
+        dmtr_dump_latency(stderr, aePushLatency);
+        dmtr_dump_latency(stderr, aeWaitForPushLatency);
+        // todo: the following seems to cause a crash-- don't understand why.
+#if 0
+        dmtr_delete_latency(aePollLatency);
+        dmtr_delete_latency(aePushLatency);
+        dmtr_delete_latency(aeWaitForPushLatency);
+#endif
+    }
 
     return C_OK;
 }
