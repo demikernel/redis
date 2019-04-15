@@ -69,14 +69,14 @@ endif
 -include .make-settings
 
 ZEUS_CFLAGS := -I$(DEMETER_INCLUDE)
-ZEUS_LDFLAGS := -L$(dir $(DEMETER_LIBOS_SO)) -Wl,-rpath,$(dir $(DEMETER_LIBOS_SO))
+ZEUS_LDFLAGS := -L$(dir $(DEMETER_LIBOS_SO)) -Wl,-rpath,$(dir $(DEMETER_LIBOS_SO)) -L$(dir $(DEMETER_LATENCY_A)) -L$(dir $(DEMETER_COMMON_A))
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb
 
-ZEUS_LIBS := -l:$(notdir $(DEMETER_LIBOS_SO))
+ZEUS_LIBS := -l:$(notdir $(DEMETER_LIBOS_SO)) -l:$(notdir $(DEMETER_LATENCY_A) ) -l:$(notdir $(DEMETER_COMMON_A)) -lboost_chrono -lboost_system -lstdc++
 FINAL_CFLAGS += $(ZEUS_CFLAGS)
 FINAL_LDFLAGS += $(ZEUS_LDFLAGS)
 FINAL_LIBS += $(ZEUS_LIBS)

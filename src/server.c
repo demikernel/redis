@@ -2611,6 +2611,14 @@ int prepareForShutdown(int flags) {
     closeListeningSockets(1);
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
         server.sentinel_mode ? "Sentinel" : "Redis");
+
+    dmtr_dump_latency(stderr, aePollLatency);
+    dmtr_delete_latency(aePollLatency);
+    dmtr_dump_latency(stderr, aePushLatency);
+    dmtr_delete_latency(aePushLatency);
+    dmtr_dump_latency(stderr, aeWaitForPushLatency);
+    dmtr_delete_latency(aeWaitForPushLatency);
+
     return C_OK;
 }
 
