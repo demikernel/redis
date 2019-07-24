@@ -57,6 +57,9 @@
 #include <sys/socket.h>
 
 #include <dmtr/libos.h>
+#include <dmtr/annot.h>
+#include <dmtr/latency.h>
+#include <dmtr/wait.h>
 
 /* Our shared "common" objects */
 
@@ -1114,10 +1117,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             long long base = server.aof_rewrite_base_size ?
                             server.aof_rewrite_base_size : 1;
             long long growth = (server.aof_current_size*100/base) - 100;
+            // irene/libspdk: turn off log file re-write here
+            /**
             if (growth >= server.aof_rewrite_perc) {
                 serverLog(LL_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);
                 rewriteAppendOnlyFileBackground();
-            }
+                }**/
          }
     }
 
@@ -1956,8 +1961,11 @@ void initServer(void) {
 
     /* Open the AOF file if needed. */
     if (server.aof_state == AOF_ON) {
-        server.aof_fd = open(server.aof_filename,
-                               O_WRONLY|O_APPEND|O_CREAT,0644);
+        // irene/spdk: open dmtr file queue
+        fprintf(stderr, "LIBOSSPDK: server.c/initServer, will call open %s\n", server.aof_filename);
+        server.aof_fd = dmtr_open(server.aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
+        fprintf(stderr, "LIBOSSPDK: aof_fd:%d\n", server.aof_fd);
+        //server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
         if (server.aof_fd == -1) {
             serverLog(LL_WARNING, "Can't open the append-only file: %s",
                 strerror(errno));
@@ -2577,6 +2585,7 @@ int prepareForShutdown(int flags) {
         /* Append only file: flush buffers and fsync() the AOF at exit */
         serverLog(LL_NOTICE,"Calling fsync() on the AOF file.");
         flushAppendOnlyFile(1);
+        fprintf(stderr, "LIBOSSPDK prepareForShutdown will aof_fsync\n");
         aof_fsync(server.aof_fd);
     }
 
