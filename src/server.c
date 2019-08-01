@@ -1963,7 +1963,10 @@ void initServer(void) {
     if (server.aof_state == AOF_ON) {
         // irene/spdk: open dmtr file queue
         fprintf(stderr, "LIBOSSPDK: server.c/initServer, will call open %s\n", server.aof_filename);
-        server.aof_fd = dmtr_open(server.aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
+        int ret = dmtr_open2(&server.aof_fd, server.aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
+        if (0 != ret) {
+            serverPanic("Unable to open log file.");
+        }
         fprintf(stderr, "LIBOSSPDK: aof_fd:%d\n", server.aof_fd);
         //server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
         if (server.aof_fd == -1) {
