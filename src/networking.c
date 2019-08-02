@@ -1445,7 +1445,11 @@ void readQueryFromClient(aeEventLoop *el, int code, const dmtr_qresult_t *qr, vo
     }
 
     if (0 != code) {
-        fprintf(stderr, "readQueryFromClient(): failure to complete operation (completion code %d)\n", code);
+        if (ECONNABORTED == code || ECONNRESET == code) {
+            fprintf(stderr, "readQueryFromClient(): client disconnected\n");
+        } else {
+            fprintf(stderr, "readQueryFromClient(): failure to complete operation (completion code %d)\n", code);
+        }
         freeClient(c);
         return;
     }

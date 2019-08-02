@@ -43,8 +43,7 @@
 #include <dmtr/libos.h>
 #include <dmtr/wait.h>
 #include <dmtr/latency.h>
-
-dmtr_latency_t *aofLogWriteLatency = NULL;
+static dmtr_latency_t *aofLogWriteLatency = NULL;
 
 void aofUpdateCurrentSize(void);
 void aofClosePipes(void);
@@ -304,17 +303,22 @@ ssize_t aofWrite(int fd, const char *buf, size_t len) {
     dmtr_qtoken_t qt;
     uint64_t t0;
 
-    fprintf(stderr, "writeToLog(): qd=%ul len=%ul\n", fd, len);
+    //fprintf(stderr, "writeToLog(): qd=%ul len=%ul buf=0x%x\n", fd, len, buf);
 
     sga.sga_numsegs = 1;
     sga.sga_segs[0].sgaseg_buf = buf;
-    sga.sga_segs[0].sgaseg_buf = len;
+    sga.sga_segs[0].sgaseg_len = len;
 
     t0 = dmtr_now_ns();
     int ret = dmtr_push(&qt, fd, &sga);
     if (0 != ret) return 0;
     ret = dmtr_wait(NULL, qt);
     if (0 != ret) return 0;
+    if (NULL == aofLogWriteLatency) {
+        if (0 != dmtr_new_latency(&aofLogWriteLatency, "redis-log-write"))
+            serverPanic("LIBOSSPDK: aof latency failed\n");
+    }
+
     (void)dmtr_record_latency(aofLogWriteLatency, dmtr_now_ns() - t0);
     return len;
 }
