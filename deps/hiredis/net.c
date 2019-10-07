@@ -55,6 +55,7 @@
 #include "sds.h"
 
 #include <dmtr/libos.h>
+#include <dmtr/wait.h>
 
 #define UNUSED(V) ((void) V)
 
@@ -413,7 +414,12 @@ addrretry:
                 goto error;
             }
         }
-        ret = dmtr_connect(s,p->ai_addr,p->ai_addrlen);
+        dmtr_qtoken_t qt;
+        ret = dmtr_connect(&qt,s,p->ai_addr,p->ai_addrlen);
+        if (0 == ret) {
+            ret = dmtr_wait(NULL, qt);
+        }
+
         if (ret != 0) {
             if (ret == EHOSTUNREACH) {
                 redisContextCloseFd(c);
@@ -499,7 +505,11 @@ int redisContextConnectUnix(redisContext *c, const char *path, const struct time
 
     sa.sun_family = AF_LOCAL;
     strncpy(sa.sun_path,path,sizeof(sa.sun_path)-1);
-    ret = dmtr_connect(c->qd,  (struct sockaddr*)&sa, sizeof(sa));
+    dmtr_qtoken_t qt;
+    ret = dmtr_connect(&qt, c->qd,  (struct sockaddr*)&sa, sizeof(sa));
+    if (0 == ret) {
+        ret = dmtr_wait(NULL, qt);
+    }
     if (0 != ret) {
         if (ret == EINPROGRESS && !blocking) {
             /* This is ok. */

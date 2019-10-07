@@ -406,7 +406,11 @@ static int anetTcpGenericConnect(char *err, char *addr, int port,
                 goto error;
             }
         }
-        ret = dmtr_connect(s,p->ai_addr,p->ai_addrlen);
+        dmtr_qtoken_t qt;
+        ret = dmtr_connect(&qt,s,p->ai_addr,p->ai_addrlen);
+        if (0 == ret) {
+            ret = dmtr_wait(NULL, qt);
+        }
         if (ret != 0) {
             /* If the socket is non-blocking, it is ok for connect() to
              * return an EINPROGRESS error here. */
@@ -482,7 +486,11 @@ int anetUnixGenericConnect(char *err, char *path, int flags)
             return ANET_ERR;
         }
     }
-    ret = dmtr_connect(s,(struct sockaddr*)&sa,sizeof(sa));
+    dmtr_qtoken_t qt;
+    ret = dmtr_connect(&qt, s,(struct sockaddr*)&sa,sizeof(sa));
+    if (0 == ret) {
+        dmtr_wait(NULL, qt);
+    }
     if (ret != 0) {
         if (ret == EINPROGRESS &&
             flags & ANET_CONNECT_NONBLOCK)
@@ -714,11 +722,11 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     }
 
     if (sa != NULL) {
-        if (NULL == len || *len < qr.qr_value.ares.len) {
+        if (NULL == len || *len < sizeof(qr.qr_value.ares.addr)) {
             return ANET_ERR;
         }
 
-        memcpy(sa, &qr.qr_value.ares.addr, qr.qr_value.ares.len);
+        memcpy(sa, &qr.qr_value.ares.addr, sizeof(qr.qr_value.ares.addr));
     }
 
     return qr.qr_value.ares.qd;

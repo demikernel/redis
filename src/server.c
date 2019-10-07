@@ -1961,6 +1961,7 @@ void initServer(void) {
 
     /* Open the AOF file if needed. */
     if (server.aof_state == AOF_ON) {
+#ifdef DMTR_OPEN2
         // irene/spdk: open dmtr file queue
         fprintf(stderr, "LIBOSSPDK: server.c/initServer, will call open %s\n", server.aof_filename);
         int ret = dmtr_open2(&server.aof_fd, server.aof_filename, O_WRONLY | O_CREAT, 0644);
@@ -1968,8 +1969,9 @@ void initServer(void) {
             serverPanic("Unable to open log file.");
         }
         fprintf(stderr, "LIBOSSPDK: aof_fd:%d\n", server.aof_fd);
-
-        //server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
+#else
+        server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
+#endif
         if (server.aof_fd == -1) {
             serverLog(LL_WARNING, "Can't open the append-only file: %s",
                 strerror(errno));
