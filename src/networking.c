@@ -35,6 +35,7 @@
 #include <arpa/inet.h>
 
 #include <dmtr/libos.h>
+#include <dmtr/sga.h>
 #include <dmtr/wait.h>
 
 static void setProtocolError(const char *errstr, client *c, long pos);
@@ -690,7 +691,7 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     c->flags |= flags;
 }
 
-void acceptTcpHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
+void acceptTcpHandler(aeEventLoop *el, int code, dmtr_qresult_t *qr, void *privdata) {
     int cport, ret;
     char cip[NET_IP_STR_LEN];
     dmtr_qtoken_t qt = 0;
@@ -1431,11 +1432,11 @@ void processInputBuffer(client *c) {
     server.current_client = NULL;
 }
 
-void readQueryFromClient(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
+void readQueryFromClient(aeEventLoop *el, int code, dmtr_qresult_t *qr, void *privdata) {
     client *c = (client*) privdata;
     int nread, readlen;
     size_t qblen;
-    const dmtr_sgarray_t *sga = NULL;
+    dmtr_sgarray_t *sga = NULL;
     dmtr_qtoken_t qt = 0;
     int ret = -1;
 
@@ -1493,6 +1494,8 @@ void readQueryFromClient(aeEventLoop *el, int code, const dmtr_qresult_t *qr, vo
     }
 
     memcpy(c->querybuf+qblen, sga->sga_segs[0].sgaseg_buf, nread);
+    dmtr_sgafree(sga);
+    sga = NULL;
 
     if (c->flags & CLIENT_MASTER) {
         /* Append the query buffer to the pending (not applied) buffer

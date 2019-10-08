@@ -50,6 +50,7 @@
 #include "anet.h"
 
 #include <dmtr/libos.h>
+#include <dmtr/sga.h>
 #include <dmtr/wait.h>
 
 #define UNUSED(x) (void)(x)
@@ -548,6 +549,7 @@ int anetRead(int qd, char *buf, int count)
     }
 
     memcpy(buf, qr.qr_value.sga.sga_segs[0].sgaseg_buf, count);
+    dmtr_sgafree(&qr.qr_value.sga);
     return totlen;
 }
 

@@ -44,6 +44,7 @@
 #include "sds.h"
 
 #include <dmtr/libos.h>
+#include <dmtr/sga.h>
 #include <dmtr/wait.h>
 
 static redisReply *createReplyObject(int type);
@@ -842,6 +843,8 @@ int redisBufferRead(redisContext *c) {
         __redisSetError(c,c->reader->err,c->reader->errstr);
         return REDIS_ERR;
     }
+
+    dmtr_sgafree(&qr.qr_value.sga);
 
     c->pop_qt = 0;
     return REDIS_OK;

@@ -70,7 +70,7 @@ typedef void aeFileProc(struct aeEventLoop *eventLoop, int fd, void *clientData,
 typedef int aeTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData);
 typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientData);
 typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
-typedef void aeQueueProc(struct aeEventLoop *eventLoop, int code, const dmtr_qresult_t *qr, void *clientData);
+typedef void aeQueueProc(struct aeEventLoop *eventLoop, int code, dmtr_qresult_t *qr, void *clientData);
 
 /* File event structure */
 typedef struct aeFileEvent {

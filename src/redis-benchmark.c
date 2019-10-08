@@ -47,6 +47,7 @@
 #include "zmalloc.h"
 
 #include <dmtr/libos.h>
+#include <dmtr/sga.h>
 
 #define UNUSED(V) ((void) V)
 #define RANDPTR_INITIAL_SIZE 8
@@ -100,7 +101,7 @@ typedef struct _client {
 } *client;
 
 /* Prototypes */
-static void writeHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata);
+static void writeHandler(aeEventLoop *el, int code, dmtr_qresult_t *qr, void *privdata);
 static void createMissingClients(client c);
 static void writeNextRequest(client c);
 
@@ -187,7 +188,7 @@ static void clientDone(client c) {
     }
 }
 
-static void readHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
+static void readHandler(aeEventLoop *el, int code, dmtr_qresult_t *qr, void *privdata) {
     client c = privdata;
     void *reply = NULL;
     UNUSED(el);
@@ -219,6 +220,7 @@ static void readHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, voi
         fprintf(stderr,"Error: %s\n",c->context->errstr);
         exit(1);
     } else {
+        dmtr_sgafree(&qr->qr_value.sga);
         while(c->pending) {
             if (redisGetReply(c->context,&reply) != REDIS_OK) {
                 fprintf(stderr,"Error: %s\n",c->context->errstr);
@@ -272,7 +274,7 @@ static void readHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, voi
     }
 }
 
-static void writeHandler(aeEventLoop *el, int code, const dmtr_qresult_t *qr, void *privdata) {
+static void writeHandler(aeEventLoop *el, int code, dmtr_qresult_t *qr, void *privdata) {
     UNUSED(el);
     client c = privdata;
     int ret;

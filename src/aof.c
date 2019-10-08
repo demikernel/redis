@@ -306,7 +306,7 @@ ssize_t aofWrite(int fd, const char *buf, size_t len) {
     //fprintf(stderr, "writeToLog(): qd=%ul len=%ul buf=0x%x\n", fd, len, buf);
 
     sga.sga_numsegs = 1;
-    sga.sga_segs[0].sgaseg_buf = buf;
+    sga.sga_segs[0].sgaseg_buf = (char *)buf;
     sga.sga_segs[0].sgaseg_len = len;
 
     t0 = dmtr_now_ns();
@@ -698,7 +698,7 @@ int loadAppendOnlyFile(char *filename) {
 /*     long loops = 0; */
 /*     off_t valid_up_to = 0; /\* Offset of latest well-formed command loaded. *\/ */
 
-    
+
 /*     if (fp == NULL) { */
 /*         serverLog(LL_WARNING,"Fatal error: can't open the append log file for reading: %s",strerror(errno)); */
 /*         exit(1); */
